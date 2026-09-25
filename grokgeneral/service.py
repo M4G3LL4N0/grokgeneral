@@ -14,7 +14,7 @@ from .events import EventBus
 from .models import Project, Task
 from .opportunities import OpportunityEngine
 from .policies import PolicyEngine
-from .projects import ProjectRegistry
+from .projects import ProjectRegistry, RootRegistry
 from .resources import ResourceRegistry
 from .router import Router
 from .scheduler import Scheduler
@@ -33,6 +33,7 @@ class GrokGeneral:
         self.policies = PolicyEngine(self.state)
         self.policies.load()
         self.cache = Cache(self.state)
+        self.roots = RootRegistry(self.state)
         self.projects = ProjectRegistry(self.state, self.events, self.cache)
         self.resources = ResourceRegistry(self.state, self.events)
         self.usage = UsageLedger(self.state)
@@ -59,13 +60,31 @@ class GrokGeneral:
         return Path(configured).expanduser().resolve() if configured else (Path.home() / "startups").resolve()
 
     def scan_projects(self, root: str | Path | None = None, include_all: bool = False) -> list[Project]:
-        return self.projects.scan(root or self.startup_root(), include_all=include_all)
+        if root is not None:
+            return self.projects.scan(root, include_all=include_all)
+        configured = self.roots.list()
+        if configured:
+            found: list[Project] = []
+            seen: set[str] = set()
+            for item in configured:
+                for project in self.projects.scan(item["path"], include_all=include_all, root_label=item.get("name")):
+                    if project.id not in seen:
+                        seen.add(project.id)
+                        found.append(project)
+            return found
+        return self.projects.scan(self.startup_root(), include_all=include_all)
 
     def add_project(self, data: dict[str, Any]) -> Project:
         return self.projects.add(data)
 
     def update_project(self, identifier: str, changes: dict[str, Any]) -> Project:
         return self.projects.update(identifier, changes)
+
+    def add_project_alias(self, identifier: str, alias: str) -> Project:
+        return self.projects.add_alias(identifier, alias)
+
+    def set_project_priority(self, identifier: str, priority: str) -> Project:
+        return self.projects.set_priority(identifier, priority)
 
     def add_resource(self, data: dict[str, Any]):
         return self.resources.add(data)

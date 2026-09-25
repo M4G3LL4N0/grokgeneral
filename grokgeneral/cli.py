@@ -149,6 +149,8 @@ def _build_parser() -> argparse.ArgumentParser:
     commands.add_parser("doctor")
 
     projects = commands.add_parser("projects")
+    projects.add_argument("--priority")
+    projects.add_argument("--kind")
     project_commands = projects.add_subparsers(dest="action")
     project_scan = project_commands.add_parser("scan")
     project_scan.add_argument("--root")
@@ -171,6 +173,26 @@ def _build_parser() -> argparse.ArgumentParser:
     project_sub_update = project_sub.add_parser("update")
     project_sub_update.add_argument("name")
     project_sub_update.add_argument("--set", action="append")
+    project_alias = project_sub.add_parser("alias")
+    project_alias_sub = project_alias.add_subparsers(dest="alias_action", required=True)
+    project_alias_add = project_alias_sub.add_parser("add")
+    project_alias_add.add_argument("project")
+    project_alias_add.add_argument("alias")
+    project_priority = project_sub.add_parser("priority")
+    project_priority.add_argument("project")
+    project_priority.add_argument("priority")
+    project_kind = project_sub.add_parser("kind")
+    project_kind.add_argument("project")
+    project_kind.add_argument("kind")
+
+    roots = commands.add_parser("roots")
+    root = commands.add_parser("root")
+    root_sub = root.add_subparsers(dest="action", required=True)
+    root_add = root_sub.add_parser("add")
+    root_add.add_argument("path")
+    root_add.add_argument("--name")
+    root_remove = root_sub.add_parser("remove")
+    root_remove.add_argument("id")
 
     resources = commands.add_parser("resources")
     resource_commands = resources.add_subparsers(dest="action")
@@ -296,6 +318,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _project_fields(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--id")
+    parser.add_argument("--canonical-id")
+    parser.add_argument("--aliases")
+    parser.add_argument("--kind")
+    parser.add_argument("--root")
     parser.add_argument("--name")
     parser.add_argument("--path")
     parser.add_argument("--repository")
@@ -303,7 +329,7 @@ def _project_fields(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tags")
     parser.add_argument("--domains")
     parser.add_argument("--status", default="unknown")
-    parser.add_argument("--priority", type=int, default=50)
+    parser.add_argument("--priority", default="50")
     parser.add_argument("--capabilities")
     parser.add_argument("--preferred")
     parser.add_argument("--fallback")
@@ -340,7 +366,12 @@ def _task_fields(parser: argparse.ArgumentParser) -> None:
 
 
 def _project_data(args: argparse.Namespace) -> dict[str, Any]:
-    data = {key: value for key, value in vars(args).items() if value is not None and key not in {"command", "action", "set", "root", "all"}}
+    data = {key: value for key, value in vars(args).items() if value is not None and key not in {"command", "action", "set", "all"}}
+    if getattr(args, "aliases", None):
+        data["aliases"] = _csv(args.aliases)
+    if getattr(args, "priority", None) is not None:
+        value = str(args.priority)
+        data["priority"] = int(value) if value.isdigit() else value
     if getattr(args, "tags", None):
         data["tags"] = _csv(args.tags)
     if getattr(args, "domains", None):
@@ -408,18 +439,30 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
             return service.status()
         if command == "doctor":
             return service.doctor()
+        if command == "roots":
+            return service.roots.list()
+        if command == "root":
+            if args.action == "add":
+                return service.roots.add(args.path, args.name)
+            return {"removed": service.roots.remove(args.id)}
         if command in {"projects", "project"}:
             action = getattr(args, "action", None) or "list"
             if action == "scan":
                 return [item.to_dict() for item in service.scan_projects(getattr(args, "root", None), include_all=getattr(args, "all", False))]
             if action == "list":
-                return [item.to_dict() for item in service.projects.list()]
+                return [item.to_dict() for item in service.projects.list(priority=getattr(args, "priority", None), kind=getattr(args, "kind", None))]
             if action == "show":
                 return service.projects.get(args.name).to_dict()
             if action == "add":
                 return service.add_project(_project_data(args)).to_dict()
             if action == "update":
                 return service.update_project(args.name, _sets(args)).to_dict()
+            if action == "alias" and getattr(args, "alias_action", None) == "add":
+                return service.add_project_alias(args.project, args.alias).to_dict()
+            if action == "priority":
+                return service.set_project_priority(args.project, args.priority).to_dict()
+            if action == "kind":
+                return service.projects.set_kind(args.project, args.kind).to_dict()
         if command in {"resources", "resource"}:
             action = getattr(args, "action", None) or "list"
             if action == "list":

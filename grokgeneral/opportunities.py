@@ -45,7 +45,7 @@ class OpportunityEngine:
             "project": project.id,
             "goal": f"Use {resource.name} for a high-value {task_type} on {project.name}",
             "task_type": task_type,
-            "priority": max(40, min(95, project.priority)),
+            "priority": max(40, min(95, project.priority_score)),
             "required_capabilities": required,
             "metadata": {"opportunity_resource": resource.id, "source": "opportunity-engine"},
         }
@@ -71,7 +71,7 @@ class OpportunityEngine:
         return 0.0, ""
 
     def _score(self, resource: Resource, project: Project | None, suitability: float) -> tuple[float, dict[str, float], list[str]]:
-        importance = (project.priority if project else 50) / 100
+        importance = (project.priority_score if project else 50) / 100
         urgency, urgency_reason = self._urgency(resource)
         value = importance * suitability
         cost = resource.marginal_cost if resource.marginal_cost is not None else (0 if resource.cost_class == "free" else float(_COST_RANK.get(resource.cost_class, 2)))

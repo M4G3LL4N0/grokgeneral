@@ -15,7 +15,7 @@ from .timeutil import isoformat, utc_now
 _SECRET_KEY = re.compile(r"(?:^|_)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|secret|password|authorization|cookie|credential|private[_-]?key)(?:$|_)", re.I)
 _SECRET_ASSIGNMENT = re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|secret|password|authorization|cookie)\s*([:=])\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)")
 _TABLES = {
-    "projects", "resources", "tasks", "policies", "events", "subscriptions",
+    "projects", "roots", "resources", "tasks", "policies", "events", "subscriptions",
     "usage", "cache_entries", "opportunities", "audit_log",
 }
 _COMMON_COLUMNS = {
@@ -133,6 +133,10 @@ class StateStore:
                     id TEXT PRIMARY KEY, name TEXT, path TEXT, repository TEXT,
                     status TEXT, priority INTEGER, data TEXT NOT NULL,
                     created_at TEXT, updated_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS roots (
+                    id TEXT PRIMARY KEY, name TEXT, path TEXT, enabled INTEGER,
+                    data TEXT NOT NULL, created_at TEXT, updated_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS resources (
                     id TEXT PRIMARY KEY, name TEXT, status TEXT, expires_at TEXT,
@@ -254,6 +258,9 @@ class StateStore:
         }
         if table == "projects":
             columns = ["id", "name", "path", "repository", "status", "priority", "data", "created_at", "updated_at"]
+        elif table == "roots":
+            values["enabled"] = int(record.get("enabled", True))
+            columns = ["id", "name", "path", "enabled", "data", "created_at", "updated_at"]
         elif table == "resources":
             columns = ["id", "name", "status", "expires_at", "health", "data", "created_at", "updated_at"]
         elif table == "tasks":

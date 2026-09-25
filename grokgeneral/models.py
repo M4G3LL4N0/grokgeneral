@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+PROJECT_KINDS = {"product", "platform", "website", "library", "tool", "experiment", "archive", "unknown"}
+PROJECT_PRIORITIES = {"core", "active", "maintained", "dormant", "archive"}
+PRIORITY_SCORES = {"core": 100, "active": 80, "maintained": 60, "dormant": 30, "archive": 10}
+
 
 def _list(value: Any) -> list[Any]:
     if value is None:
@@ -23,12 +27,17 @@ class Project:
     id: str
     name: str
     path: str
+    canonical_id: str | None = None
+    aliases: list[str] = field(default_factory=list)
+    kind: str = "unknown"
+    root: str | None = None
+    priority: int | str = 50
+    priority_tier: str | None = None
     repository: str | None = None
     description: str = ""
     tags: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
     status: str = "unknown"
-    priority: int = 50
     capabilities_needed: list[str] = field(default_factory=list)
     preferred_executors: list[str] = field(default_factory=list)
     fallback_executors: list[str] = field(default_factory=list)
@@ -39,6 +48,26 @@ class Project:
     metadata: dict[str, Any] = field(default_factory=dict)
     discovered: bool = False
 
+    def __post_init__(self) -> None:
+        if not self.canonical_id:
+            self.canonical_id = self.id
+        if self.kind not in PROJECT_KINDS:
+            raise ValueError(f"unsupported project kind: {self.kind}")
+        if isinstance(self.priority, str):
+            if self.priority not in PROJECT_PRIORITIES:
+                raise ValueError(f"unsupported project priority: {self.priority}")
+            self.priority_tier = self.priority
+        elif self.priority_tier is not None and self.priority_tier not in PROJECT_PRIORITIES:
+            raise ValueError(f"unsupported project priority: {self.priority_tier}")
+
+    @property
+    def priority_score(self) -> int:
+        if isinstance(self.priority, str):
+            return PRIORITY_SCORES[self.priority]
+        if self.priority_tier in PROJECT_PRIORITIES:
+            return PRIORITY_SCORES[self.priority_tier]
+        return int(self.priority)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -46,16 +75,26 @@ class Project:
     def from_dict(cls, value: dict[str, Any]) -> Project:
         data = _dict(value.get("data"))
         merged = {**data, **{k: v for k, v in value.items() if k != "data"}}
+        priority_value = merged.get("priority", 50)
+        if isinstance(priority_value, str):
+            priority = priority_value
+        else:
+            priority = int(priority_value)
         return cls(
             id=str(merged.get("id", "")),
             name=str(merged.get("name", merged.get("id", ""))),
             path=str(merged.get("path", "")),
+            canonical_id=merged.get("canonical_id") or merged.get("id"),
+            aliases=[str(item) for item in _list(merged.get("aliases"))],
+            kind=str(merged.get("kind", "unknown")),
+            root=merged.get("root"),
+            priority=priority,
+            priority_tier=merged.get("priority_tier"),
             repository=merged.get("repository"),
             description=str(merged.get("description", "")),
             tags=_list(merged.get("tags")),
             domains=_list(merged.get("domains")),
             status=str(merged.get("status", "unknown")),
-            priority=int(merged.get("priority", 50)),
             capabilities_needed=_list(merged.get("capabilities_needed")),
             preferred_executors=_list(merged.get("preferred_executors")),
             fallback_executors=_list(merged.get("fallback_executors")),
