@@ -35,7 +35,34 @@ class GrokBotContract:
         self.service = service
 
     def status(self) -> dict[str, Any]:
-        return _envelope(self.service.status_snapshot())
+        """Project the dashboard onto the compact contract.
+
+        The contract is a bounded integration surface, so it carries the counts,
+        freshness, and next actions a caller needs rather than the full dashboard
+        payload. Passing the snapshot through wholesale would push the envelope
+        past its size cap and collapse to {"truncated": true}, which tells the
+        caller nothing.
+        """
+        snapshot = self.service.status_snapshot()
+        projects = snapshot.get("projects") if isinstance(snapshot.get("projects"), dict) else {}
+        compact = {
+            "generated_at": snapshot.get("generated_at"),
+            "health": snapshot.get("health"),
+            "projects": {"count": projects.get("count", 0), "items": list(projects.get("items") or [])[:5]},
+            "tasks": snapshot.get("tasks"),
+            "tasks_by_status": snapshot.get("tasks_by_status"),
+            "blockers": list(snapshot.get("blockers") or [])[:5],
+            "running_tasks": list(snapshot.get("running_tasks") or [])[:5],
+            "pending_approvals": list(snapshot.get("pending_approvals") or [])[:5],
+            "free_resources": list(snapshot.get("free_resources") or [])[:5],
+            "expiring_resources": list(snapshot.get("expiring_resources") or [])[:5],
+            "recent_completions": list(snapshot.get("recent_completions") or [])[-5:],
+            "top_opportunities": list(snapshot.get("top_opportunities") or [])[:3],
+            "opportunity_digest": snapshot.get("opportunity_digest"),
+            "health_freshness": snapshot.get("health_freshness"),
+            "next_actions": list(snapshot.get("next_actions") or [])[:3],
+        }
+        return _envelope(compact)
 
     def submit_task(self, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict) or not isinstance(payload.get("goal"), str) or not payload["goal"].strip():

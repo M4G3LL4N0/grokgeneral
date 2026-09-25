@@ -260,12 +260,40 @@ Usage always identifies its source as `measured`, `reported`, `user-entered`, `e
 ./gg doctor
 ./gg adapters
 ./gg adapter opencode health --json
+./gg adapter opencode discover --json
+./gg adapter opencode configure /path/to/opencode
 ./gg adapter opencode models --json
 ./gg export backup.json
 ./gg import backup.json
 ```
 
-`status` is a bounded daily dashboard and never runs providers or validation merely to render. `--full` adds bounded project and execution details. The GrokBot contract is documented in [`docs/grokbot-integration.md`](docs/grokbot-integration.md). `doctor` checks SQLite integrity, policy validity, project paths, duplicate identities, stale resources, event delivery state, and optional adapter health. Missing provider binaries are reported as degraded optional adapters, not startup failures. The verified OpenCode adapter invokes `opencode run --pure --format json --dir PROJECT --model PROVIDER/MODEL MESSAGE`; it does not add `--auto` or credentials.
+`status` is a bounded daily dashboard and never runs providers or validation merely to render. It reads persisted state only: it does not walk repositories, run git, or rebuild opportunity candidates, so its cost does not grow with the number of registered projects. `--full` adds bounded project and execution details. The GrokBot contract is documented in [`docs/grokbot-integration.md`](docs/grokbot-integration.md). `doctor` checks SQLite integrity, policy validity, project paths, duplicate identities, stale resources, event delivery state, optional adapter health, and whether project health summaries were ever recorded or have gone stale. Missing provider binaries are reported as degraded optional adapters, not startup failures. The verified OpenCode adapter invokes `opencode run --pure --format json --dir PROJECT --model PROVIDER/MODEL MESSAGE`; it does not add `--auto` or credentials.
+
+### Refresh boundary
+
+`status` is read-only. Anything that touches the filesystem or git is an explicit command:
+
+```sh
+./gg backlog scan                      # rescan projects, record health, rebuild the opportunity digest
+./gg backlog scan --project PROJECT    # one project
+./gg backlog scan --force              # ignore freshness and rescan everything
+./gg backlog scan --max-age 900        # treat summaries older than 15 minutes as stale
+./gg backlog scan --no-opportunities   # health only, skip rebuilding the digest
+./gg backlog                           # read persisted summaries (no scanning)
+./gg backlog --live                    # inspect now and return raw findings
+./gg backlog --live --all-markers      # include markers from tests, docs, and generated files
+./gg opportunities refresh             # rebuild only the opportunity digest
+./gg projects scan                     # discover projects, then refresh their health
+./gg projects scan --no-health         # discover only
+```
+
+A refresh records, per project: `last_scanned`, `git_health`, `dirty`, `test_status`, `build_status`, `ci_present`, `blockers`, `backlog_count`, and `recent_execution`. `status` reports how many summaries are fresh, stale, or never scanned, so absent data is visible rather than silently rebuilt. Non-forced refreshes skip fresh projects, and the findings collected during the health pass are reused to build the opportunity digest, so each repository is inspected once.
+
+Repository scanning is bounded: excluded directories such as `node_modules`, `.git`, and `dist` are never descended into, the number of examined file names is capped, and oversized files are skipped. Scan cost does not scale with repository size.
+
+### OpenCode discovery
+
+The OpenCode binary is resolved in order: an explicitly configured path, `GG_OPENCODE_BIN`, a previously discovered path that still exists, `PATH`, then known local install locations derived from the environment. The discovered path is persisted so later runs resolve the same binary even when they inherit a different `PATH`. `health` reports `resolved_via` and the locations that were searched. No machine-specific path is hardcoded.
 
 ## Safety model
 
@@ -273,7 +301,8 @@ Usage always identifies its source as `measured`, `reported`, `user-entered`, `e
 - Local commands require explicit argv and a bounded timeout.
 - OpenCode execution requires explicit execution permission; configured repository validation requires a `validate` approval.
 - Network, spending, push, posting, privacy-sensitive, dirty-repo, and destructive operations require narrow approval IDs or explicit direct-operator permission.
-- The scheduler defaults to two workers, four tasks, and five minutes per cycle, serializes mutation of one repository, and supports pause/stop.
+- The scheduler defaults to two workers, four tasks, and five minutes per cycle, serializes mutation of one repository, and supports pause/stop. Retries are opt-in and bounded, and an optional cooldown keeps a failing task from being retried every cycle.
+- Migrating an external queue means moving its items into tasks and shutting down its own loop; [`docs/queue-migration.md`](docs/queue-migration.md) defines that boundary and the primitives it reuses.
 - The executor never passes OpenCode `--auto` and never performs Git stash/reset/discard, commit, push, deployment, or spending actions.
 - Provider adapters do not contain credentials and do not read or persist secrets.
 - Secret-shaped keys and common secret assignments are redacted before state, cache, event, context, execution logs, receipts, and output persistence.
@@ -288,7 +317,7 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q grokgeneral tests
 ```
 
-The tests cover persistence, atomic writes, concurrent writers, project/resource registries, explicit roots and identity, expiration/rerouting, evidence-backed opportunities, durable approvals, bounded scheduler claims and repository locks, compact results, unit-aware usage, OpenCode adapter parsing, execution receipts, repository safety, validation, dashboard, GrokBot contract, events, context isolation, cache, malformed input, offline behavior, CLI JSON, and service integration. The current offline suite contains 151 tests.
+The tests cover persistence, atomic writes, concurrent writers, project/resource registries, explicit roots and identity, expiration/rerouting, evidence-backed opportunities, durable approvals, bounded scheduler claims and repository locks, compact results, unit-aware usage, OpenCode adapter parsing, execution receipts, repository safety, validation, dashboard, GrokBot contract, events, context isolation, cache, malformed input, offline behavior, CLI JSON, and service integration. Part 4 adds bounded repository scanning, persisted project health summaries, the explicit refresh boundary, execution-attributed file changes, OpenCode discovery precedence, backlog evidence filtering, and the queue migration primitives. The current offline suite contains 208 tests.
 
 A real dogfood execution was run through GrokGeneral with the verified `opencode/space-bunny-free` model in a clean temporary Git project. It produced a completed receipt only after the registered validation command passed. The Part 2 dogfood batch used two clean temporary projects and two read-only tasks: both routed to Space Bunny, completed with validation, produced compact results, and reported free-resource usage without changing repository files. Neighboring repositories were neither scanned nor mutated.
 

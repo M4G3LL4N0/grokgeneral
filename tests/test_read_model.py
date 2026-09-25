@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from grokgeneral.service import GrokGeneral
+from grokgeneral.storage import canonical_json
 from grokgeneral.timeutil import isoformat, utc_now
 
 
@@ -105,6 +106,18 @@ class StatusReadModelTests(unittest.TestCase):
         self.assertEqual(forced["scanned"], 1)
         self.assertEqual(forced["skipped_fresh"], 0)
         self.assertEqual(self.calls, ["fixture"])
+
+    def test_digest_stores_compact_opportunities_not_raw_candidates(self):
+        self.service.resources.add({"id": "space", "name": "space", "provider": "opencode", "executor": "Space Bunny", "model": "opencode/space-bunny-free", "cost_class": "free", "availability": "unlimited", "capabilities": ["coding", "testing", "repo-analysis"], "expires_at": isoformat(utc_now())})
+        self.service.refresh_status()
+        items = self.service.status_model.opportunity_digest()["items"]
+        self.assertTrue(items)
+        for item in items:
+            self.assertLessEqual(len(canonical_json(item).encode("utf-8")), 1000)
+            for key in ("work_key", "project", "score", "evidence"):
+                self.assertIn(key, item)
+        self.assertNotIn("previous_executions", items[0])
+        self.assertNotIn("proposed_work", items[0])
 
     def test_digest_records_generated_at_and_bounded_items(self):
         self.service.resources.add({"id": "space", "name": "space", "provider": "opencode", "executor": "Space Bunny", "model": "opencode/space-bunny-free", "cost_class": "free", "availability": "unlimited", "capabilities": ["coding", "testing", "repo-analysis"], "expires_at": isoformat(utc_now())})

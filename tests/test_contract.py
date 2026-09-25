@@ -41,6 +41,28 @@ class ContractTests(unittest.TestCase):
         self.assert_compact(result)
         self.assertEqual(result["result"]["status"], "success")
 
+    def test_contract_status_stays_informative_at_scale(self):
+        for index in range(60):
+            project_path = self.root / f"p{index}"
+            project_path.mkdir()
+            (project_path / "README.md").write_text("# x\n", encoding="utf-8")
+            (project_path / "src").mkdir()
+            (project_path / "src" / "a.js").write_text("// TODO: build it\n", encoding="utf-8")
+            (project_path / "LICENSE").write_text("x", encoding="utf-8")
+            (project_path / "package.json").write_text('{"scripts":{"build":"true","test":"true"}}', encoding="utf-8")
+            self.service.projects.add({"id": f"p{index}", "name": f"P{index}", "path": str(project_path), "priority": "core", "status": "active"})
+        self.service.refresh_status()
+        status = self.service.contract_status()
+        self.assertTrue(status["ok"])
+        self.assertNotEqual(status["result"], {"truncated": True})
+        self.assert_compact(status)
+        result = status["result"]
+        self.assertEqual(result["projects"]["count"], 61)
+        self.assertEqual(result["health_freshness"]["scanned"], 61)
+        self.assertIn("status", result["opportunity_digest"])
+        self.assertIn("next_actions", result)
+        self.assertNotIn("project_health", result)
+
     def test_contract_execution_requires_approval_id(self):
         response = self.service.contract_request_execution(self.task.id, [], {"allow_execution": True})
         self.assertFalse(response["ok"])

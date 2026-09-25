@@ -15,12 +15,13 @@ _SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "ok": 3}
 
 
 class Doctor:
-    def __init__(self, state: StateStore, projects: ProjectRegistry | None = None, resources: ResourceRegistry | None = None, events: Any | None = None, adapters: Any | None = None) -> None:
+    def __init__(self, state: StateStore, projects: ProjectRegistry | None = None, resources: ResourceRegistry | None = None, events: Any | None = None, adapters: Any | None = None, status_model: Any | None = None) -> None:
         self.state = state
         self.projects = projects
         self.resources = resources
         self.events = events
         self.adapters = adapters
+        self.status_model = status_model
         self.state.initialize()
 
     def _diagnostic(self, code: str, severity: str, message: str, remediation: str, **details: Any) -> dict[str, Any]:
@@ -82,9 +83,30 @@ class Doctor:
             try:
                 adapter_health = self.adapters.health()
                 for name, value in adapter_health.items():
-                    if isinstance(value, dict) and value.get("available") is False:
-                        diagnostics.append(self._diagnostic("adapter.unavailable", "info", f"Adapter unavailable: {name}", "Install the optional provider or keep local fallbacks enabled.", adapter=name))
+                    if not isinstance(value, dict):
+                        continue
+                    if value.get("available") is False:
+                        extra: dict[str, Any] = {}
+                        searched = value.get("searched")
+                        if searched:
+                            extra["searched"] = searched
+                        diagnostics.append(self._diagnostic("adapter.unavailable", "info", f"Adapter unavailable: {name}", f"Run 'gg adapter {name} configure PATH' to pin an executable, or install the optional provider. Local fallbacks stay available.", adapter=name, **extra))
+                    elif value.get("resolved_via"):
+                        diagnostics.append(self._diagnostic("adapter.resolved", "ok", f"Adapter {name} resolved via {value['resolved_via']}", "No action required.", adapter=name, resolved_via=value["resolved_via"]))
             except Exception as exc:
                 diagnostics.append(self._diagnostic("adapter.health_failed", "warning", f"Adapter health check failed: {exc}", "Review adapter configuration."))
+        if self.status_model is not None:
+            try:
+                overview = self.status_model.health_overview()
+            except Exception as exc:
+                overview = None
+                diagnostics.append(self._diagnostic("status.read_failed", "warning", f"Project health summaries could not be read: {exc}", "Run 'gg backlog scan' to rebuild them."))
+            if isinstance(overview, dict) and overview.get("projects"):
+                never_scanned = int(overview.get("never_scanned") or 0)
+                stale = int(overview.get("stale") or 0)
+                if never_scanned:
+                    diagnostics.append(self._diagnostic("status.never_scanned", "info", f"{never_scanned} of {overview['projects']} projects have never been scanned", "Run 'gg backlog scan' to record project health summaries.", count=never_scanned, projects=overview["projects"]))
+                if stale:
+                    diagnostics.append(self._diagnostic("status.stale", "info", f"{stale} project health summaries are stale", "Run 'gg backlog scan' to refresh them.", count=stale, max_age_seconds=overview.get("max_age_seconds")))
         diagnostics.sort(key=lambda item: (_SEVERITY_ORDER.get(item["severity"], 9), item["code"], item.get("project", ""), item.get("resource", "")))
         return diagnostics

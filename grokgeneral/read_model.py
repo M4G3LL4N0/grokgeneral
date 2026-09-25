@@ -48,6 +48,46 @@ def _age_seconds(value: Any) -> float | None:
         return None
 
 
+def _compact_evidence(evidence: Any) -> dict[str, Any]:
+    if not isinstance(evidence, dict):
+        return {}
+    return {
+        key: evidence.get(key)
+        for key in ("kind", "path", "line", "marker", "severity", "confidence", "source")
+        if evidence.get(key) is not None
+    }
+
+
+def compact_opportunity(item: dict[str, Any]) -> dict[str, Any]:
+    """Project an opportunity candidate onto the fields a status read model needs.
+
+    Raw candidates carry evidence, component scores, proposed work, and execution
+    history, which is far too large to persist per project and read on every
+    status call.
+    """
+    evidence = _compact_evidence(item.get("evidence"))
+    health = item.get("project_health") if isinstance(item.get("project_health"), dict) else {}
+    return {
+        "id": item.get("id"),
+        "work_key": item.get("work_key"),
+        "task": item.get("task"),
+        "project": item.get("project"),
+        "executor": item.get("executor"),
+        "provider": item.get("provider"),
+        "model": item.get("model"),
+        "resource": item.get("resource"),
+        "cost_class": item.get("cost_class"),
+        "score": item.get("score"),
+        "reason": str(item.get("reason") or "")[:160],
+        "approval_needed": list(item.get("approval_needed") or [])[:8],
+        "eligible": bool(item.get("eligible")),
+        "validation_ready": bool(item.get("validation_ready")),
+        "blocked_reasons": [str(value)[:80] for value in list(item.get("blocked_reasons") or [])[:3]],
+        "project_health": {"status": health.get("status"), "score": health.get("score")},
+        "evidence": evidence,
+    }
+
+
 class StatusReadModel:
     """Persisted read models that make status fast and read-only.
 
@@ -177,7 +217,7 @@ class StatusReadModel:
         payload = {
             "generated_at": isoformat(utc_now()),
             "count": len(items),
-            "items": list(items)[:_DIGEST_LIMIT],
+            "items": [compact_opportunity(item) for item in items if isinstance(item, dict)][:_DIGEST_LIMIT],
         }
         with self.state.transaction() as connection:
             self.state.put_record(connection, "status_digest", {"id": _OPPORTUNITY_DIGEST_ID, "kind": "opportunities", "data": payload})

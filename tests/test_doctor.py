@@ -45,6 +45,41 @@ class DoctorTests(unittest.TestCase):
         diagnostics = Doctor(self.state, self.projects, self.resources).run()
         self.assertIn("project.duplicate_path", {item["code"] for item in diagnostics})
 
+    def test_unavailable_adapter_reports_search_order_and_remedy(self):
+        class Adapters:
+            def health(self):
+                return {"opencode": {"available": False, "resolved_via": "unavailable", "searched": ["/opt/homebrew/bin/opencode"]}, "cursor": {"available": False}}
+
+        diagnostics = Doctor(self.state, self.projects, self.resources, adapters=Adapters()).run()
+        opencode = next(item for item in diagnostics if item["code"] == "adapter.unavailable" and item.get("adapter") == "opencode")
+        self.assertIn("configure", opencode["remediation"])
+        self.assertEqual(opencode["searched"], ["/opt/homebrew/bin/opencode"])
+        cursor = next(item for item in diagnostics if item["code"] == "adapter.unavailable" and item.get("adapter") == "cursor")
+        self.assertNotIn("searched", cursor)
+
+    def test_available_adapter_reports_how_it_was_resolved(self):
+        class Adapters:
+            def health(self):
+                return {"opencode": {"available": True, "resolved_via": "known_location", "executable": "/home/x/.opencode/bin/opencode"}}
+
+        diagnostics = Doctor(self.state, self.projects, self.resources, adapters=Adapters()).run()
+        resolved = next(item for item in diagnostics if item["code"] == "adapter.resolved")
+        self.assertEqual(resolved["resolved_via"], "known_location")
+        self.assertEqual(resolved["adapter"], "opencode")
+
+    def test_stale_project_health_is_reported(self):
+        class Model:
+            def health_overview(self, max_age_seconds=None):
+                return {"projects": 3, "scanned": 3, "never_scanned": 1, "stale": 2, "fresh": 0, "dirty": 1, "max_age_seconds": 3600}
+
+        class ReadModel:
+            health_overview = Model().health_overview
+
+        diagnostics = Doctor(self.state, self.projects, self.resources, status_model=ReadModel()).run()
+        codes = {item["code"] for item in diagnostics}
+        self.assertIn("status.never_scanned", codes)
+        self.assertIn("status.stale", codes)
+
 
 if __name__ == "__main__":
     unittest.main()

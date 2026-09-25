@@ -56,7 +56,7 @@ class GrokGeneral:
         self.backlog = BacklogInspector(self.state, self.projects)
         self.opportunities_engine = OpportunityEngineV2(self.state, self.projects, self.resources, self.tasks, self.router, self.backlog, self.executions)
         self.status_model = StatusReadModel(self.state, self.projects, self.backlog, self.executions)
-        self._doctor = Doctor(self.state, self.projects, self.resources, self.events, self.adapters)
+        self._doctor = Doctor(self.state, self.projects, self.resources, self.events, self.adapters, self.status_model)
         self.contract = GrokBotContract(self)
 
     @property
