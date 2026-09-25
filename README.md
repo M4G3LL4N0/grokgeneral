@@ -11,10 +11,10 @@ It is not a general-purpose autonomous agent. GrokGeneral performs little expens
 - **Policy and routing:** deterministic, capability-aware, cost-aware, explainable decisions with fallbacks.
 - **Opportunity engine:** interpretable project importance × suitability × expiration urgency ÷ effective cost scoring. Scores are planning aids, not precision claims.
 - **Context builder:** task-scoped packs with compact policy, one project, safe manifest/status data, and explicitly referenced files only.
-- **Adapters:** local shell is functional; OpenCode, Cursor, ChatGPT, GrokBot, and GitHub are optional capability/health boundaries.
+- **Adapters:** local shell is functional; OpenCode is a verified argv-based execution boundary; Cursor, ChatGPT, GrokBot, and GitHub remain optional capability/health boundaries.
 - **Persistence:** SQLite with WAL, transactions, a busy timeout, private permissions, and atomic JSON policy/cache/context writes.
 
-No AI provider or API key is required. The default path works offline.
+No AI provider or API key is required for the default offline path. A real OpenCode execution uses the adapter's installed CLI authentication, not credentials stored by GrokGeneral.
 
 ## Requirements
 
@@ -72,11 +72,19 @@ The default policy prefers existing results, deterministic local work, free and 
 The first initialization also seeds a local shell resource named `local`. It is deterministic, free, and used as a safe fallback. The first initialization seeds an ordinary temporary resource named `space-bunny`:
 
 - provider: `opencode`
-- executor/model: `Space Bunny`
+- executor: `Space Bunny`
+- verified model: `opencode/space-bunny-free`
 - cost: free
 - availability: unlimited
 - capabilities: coding, repository analysis, refactoring, testing
 - expiration: seven days after the first seed
+
+The seeded model is verified OpenCode state, not a hard-coded provider requirement. Confirm the installed adapter and model with:
+
+```sh
+./gg adapter opencode health --json
+./gg adapter opencode models --json
+```
 
 It is normal mutable state, not a permanent source-code special case. Update or expire it with:
 
@@ -102,10 +110,28 @@ All important commands accept `--json` before or after the command.
 ./gg project update gh0st --set priority=90
 ```
 
+### Roots and project identity
+
+GrokGeneral scans only explicitly registered roots; it never scans all of `$HOME`. The default seed is the `~/startups/` root, and additional roots can be added and removed:
+
+```sh
+./gg roots --json
+./gg root add ~/startups --name startups
+./gg root remove startups
+./gg project alias add gh0st ghost
+./gg project kind gh0st tool
+./gg project priority gh0st active
+./gg projects --priority active
+```
+
+Project identity is separate from folder names. Each project has a stable canonical ID, optional aliases, a kind, and a priority/tier. Existing `id` and `name` fields remain supported for v1 compatibility.
+
 ### Resources
 
 ```sh
 ./gg resources
+./gg resources --expiring
+./gg resources --expired
 ./gg resource show space-bunny
 ./gg resource add --id cursor --name cursor --provider cursor \
   --cost-class cheap --capabilities coding,architecture-review --availability limited
@@ -125,7 +151,7 @@ All important commands accept `--json` before or after the command.
 ./gg task fail TASK_ID "reason"
 ```
 
-Tasks have explicit lifecycle states: `proposed`, `queued`, `running`, `completed`, `failed`, `blocked`, and `cancelled`. A task with a command runs only an explicit argv list. It never invokes a shell string. A missing command routes/queues the task; it does not call a model automatically.
+Tasks have explicit lifecycle states: `proposed`, `queued`, `routed`, `running`, `validating`, `completed`, `failed`, `blocked`, and `cancelled`. A task with a command runs only an explicit argv list. It never invokes a shell string. A missing command routes/queues the task; it does not call a model automatically.
 
 Routing output contains the selected executor, provider, model, rationale, fallbacks, cost class, policy matches, and candidate scores:
 
@@ -133,6 +159,20 @@ Routing output contains the selected executor, provider, model, rationale, fallb
 ./gg route "audit all startup repos" --json
 ./gg route --project gh0st "fix failing build" --json
 ```
+
+### Safe execution and receipts
+
+Use `executor run` for the explicit OpenCode path. It requires `--allow-execution`; a configured validation command also requires `--allow-validate` unless the project policy grants validation. A dry run shows the exact argv and makes no task, cache, receipt, log, or project changes.
+
+```sh
+./gg executor run TASK_ID --dry-run --json
+./gg executor run TASK_ID --allow-execution --allow-validate --json
+./gg executions
+./gg task executions TASK_ID
+./gg execution show EXECUTION_ID --json
+```
+
+The pipeline captures the project path, Git branch/revision/status and a context hash before execution, invokes OpenCode with an explicit project directory and model, and stores a compact receipt in SQLite. Raw JSONL output is redacted and stored separately under `GG_STATE_DIR/execution-logs/`. A provider exit code of `0` is not considered successful until project validation passes. The executor never passes `--auto`, and it never stashes, resets, discards, commits, pushes, deploys, or spends credits.
 
 ### Opportunities and scheduling
 
@@ -192,20 +232,24 @@ Usage always identifies its source as `measured`, `user-entered`, `estimated`, o
 ./gg status
 ./gg doctor
 ./gg adapters
+./gg adapter opencode health --json
+./gg adapter opencode models --json
 ./gg export backup.json
 ./gg import backup.json
 ```
 
-`doctor` checks SQLite integrity, policy validity, project paths, duplicate identities, stale resources, event delivery state, and optional adapter health. Missing provider binaries are reported as degraded optional adapters, not startup failures.
+`doctor` checks SQLite integrity, policy validity, project paths, duplicate identities, stale resources, event delivery state, and optional adapter health. Missing provider binaries are reported as degraded optional adapters, not startup failures. The verified OpenCode adapter invokes `opencode run --pure --format json --dir PROJECT --model PROVIDER/MODEL MESSAGE`; it does not add `--auto` or credentials.
 
 ## Safety model
 
 - Read-only inspection, planning, and local testing are allowed by default.
 - Local commands require explicit argv and a bounded timeout.
+- OpenCode execution requires `--allow-execution`; repository validation requires `--allow-validate` or a project policy grant.
 - Network, spending, push, posting, privacy-sensitive, and destructive operations require explicit approval flags or policy approval.
+- The executor never passes OpenCode `--auto` and never performs Git stash/reset/discard, commit, push, deployment, or spending actions.
 - Provider adapters do not contain credentials and do not read or persist secrets.
-- Secret-shaped keys and common secret assignments are redacted before state, cache, event, context, and output persistence.
-- No network operation is required for tests or normal operation.
+- Secret-shaped keys and common secret assignments are redacted before state, cache, event, context, execution logs, receipts, and output persistence.
+- No network operation is required for the offline test suite or the default local path.
 
 ## Tests and validation
 
@@ -216,7 +260,9 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q grokgeneral tests
 ```
 
-The tests cover persistence, atomic writes, concurrent writers, project/resource registries, expiration, policies, routing, task lifecycle, adapters, opportunities, events, context isolation, cache, usage, malformed input, offline behavior, CLI JSON, and service integration.
+The tests cover persistence, atomic writes, concurrent writers, project/resource registries, explicit roots and identity, expiration/rerouting, policies, routing, task lifecycle, OpenCode adapter parsing, execution receipts, repository safety, validation, opportunities, events, context isolation, cache, usage, malformed input, offline behavior, CLI JSON, and service integration. The current offline suite contains 113 tests.
+
+A real dogfood execution was run through GrokGeneral with the verified `opencode/space-bunny-free` model in a clean temporary Git project. It produced a completed receipt only after the registered validation command passed.
 
 ## Deliberate v1 limitations
 
@@ -225,4 +271,6 @@ The tests cover persistence, atomic writes, concurrent writers, project/resource
 - Backlog inspection proposes findings and tasks but never changes neighboring repositories.
 - Build status is evidence-based. GrokGeneral does not claim a build is broken without recorded evidence or an explicitly run local command.
 - The scheduler is on-demand; no background process consumes resources while the CLI is closed.
+- OpenCode is an explicit, one-task execution adapter; GrokGeneral does not manage a long-lived agent session, credential lifecycle, or autonomous tool approvals.
+- Git mutations and external side effects remain outside the executor boundary.
 - The repository contains no marketing website; a future site belongs in `~/startups/grokgeneral-website/`.
