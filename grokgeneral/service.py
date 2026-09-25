@@ -9,6 +9,8 @@ from .approvals import ApprovalRegistry
 from .backlog import BacklogInspector
 from .cache import Cache
 from .context import ContextBuilder
+from .contracts import GrokBotContract
+from .dashboard import build_status_snapshot
 from .doctor import Doctor
 from .errors import NotFoundError
 from .events import EventBus
@@ -53,6 +55,7 @@ class GrokGeneral:
         self.backlog = BacklogInspector(self.state, self.projects)
         self.opportunities_engine = OpportunityEngineV2(self.state, self.projects, self.resources, self.tasks, self.router, self.backlog, self.executions)
         self._doctor = Doctor(self.state, self.projects, self.resources, self.events, self.adapters)
+        self.contract = GrokBotContract(self)
 
     @property
     def state_dir(self) -> Path:
@@ -216,6 +219,30 @@ class GrokGeneral:
 
     def optimize(self, max_tasks: int = 4, execute: bool = False, queue: bool | None = None) -> dict[str, Any]:
         return self.opportunities_engine.optimize(max_tasks=max_tasks, execute=execute, queue=queue)
+
+    def status_snapshot(self, full: bool = False) -> dict[str, Any]:
+        return build_status_snapshot(self, full=full)
+
+    def contract_status(self) -> dict[str, Any]:
+        return self.contract.status()
+
+    def contract_submit_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.contract.submit_task(payload)
+
+    def contract_route_task(self, task_id: str) -> dict[str, Any]:
+        return self.contract.route_task(task_id)
+
+    def contract_request_execution(self, task_id: str, approval_ids: list[str], options: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.contract.request_execution(task_id, approval_ids, options)
+
+    def contract_result(self, task_id: str | None = None, execution_id: str | None = None) -> dict[str, Any]:
+        return self.contract.result(task_id=task_id, execution_id=execution_id)
+
+    def contract_pending_approvals(self, limit: int = 20) -> dict[str, Any]:
+        return self.contract.pending_approvals(limit=limit)
+
+    def contract_global_changes(self, limit: int = 20, cursor: str | None = None) -> dict[str, Any]:
+        return self.contract.global_changes(limit=limit, cursor=cursor)
 
     def status(self) -> dict[str, Any]:
         self.resources.refresh_expirations()

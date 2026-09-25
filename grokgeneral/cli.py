@@ -49,6 +49,12 @@ def _emit(value: Any, json_output: bool, human: str | None = None) -> None:
                 print(item)
         return
     if isinstance(value, dict):
+        if {"generated_at", "health", "top_opportunities", "next_actions"}.issubset(value):
+            print(f"Projects: {value['projects']['count']}  Tasks: {value['tasks']}  Healthy: {value['health'].get('ok')}")
+            print(f"Running: {len(value.get('running_tasks', []))}  Pending approvals: {len(value.get('pending_approvals', []))}  Free resources: {len(value.get('free_resources', []))}")
+            for action in value.get("next_actions", [])[:3]:
+                print(f"Next: {action.get('project', '')} {action.get('action', '')}")
+            return
         if {"projects", "tasks", "resources", "health"}.issubset(value):
             print(f"Projects: {value['projects']}  Tasks: {value['tasks']}  Resources: {value['resources']}")
             print(f"Expiring: {len(value.get('expiring_resources', []))}  Opportunities: {len(value.get('opportunities', []))}  Healthy: {value['health'].get('ok')}")
@@ -145,7 +151,8 @@ def _build_parser() -> argparse.ArgumentParser:
     init.add_argument("--root")
     init.add_argument("--all", action="store_true")
 
-    commands.add_parser("status")
+    status = commands.add_parser("status")
+    status.add_argument("--full", action="store_true")
     commands.add_parser("doctor")
 
     projects = commands.add_parser("projects")
@@ -385,6 +392,17 @@ def _build_parser() -> argparse.ArgumentParser:
     opencode_run.add_argument("--timeout", type=float, default=120)
     opencode_run.add_argument("--dry-run", action="store_true")
     opencode_run.add_argument("--allow-execution", action="store_true")
+    contract = commands.add_parser("contract")
+    contract_sub = contract.add_subparsers(dest="contract_action", required=True)
+    contract_status = contract_sub.add_parser("status")
+    contract_result = contract_sub.add_parser("result")
+    contract_result.add_argument("--task")
+    contract_result.add_argument("--execution")
+    contract_approvals = contract_sub.add_parser("approvals")
+    contract_approvals.add_argument("--limit", type=int, default=20)
+    contract_changes = contract_sub.add_parser("changes")
+    contract_changes.add_argument("--limit", type=int, default=20)
+    contract_changes.add_argument("--cursor")
     policy = commands.add_parser("policy")
     policy.add_argument("action", choices=["show", "path"])
     export = commands.add_parser("export")
@@ -532,7 +550,7 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
                 return {"initialized": True, "state_dir": str(service.state_dir), "projects": [item.to_dict() for item in projects]}
             return service.initialize()
         if command == "status":
-            return service.status()
+            return service.status_snapshot(full=args.full)
         if command == "doctor":
             return service.doctor()
         if command == "roots":
@@ -695,6 +713,14 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
             return service.adapters.run("opencode", args.message, cwd=args.project, model=args.model, timeout=args.timeout, dry_run=args.dry_run, allow_execution=args.allow_execution)
         if command == "adapters":
             return service.adapters.health()
+        if command == "contract":
+            if args.contract_action == "status":
+                return service.contract_status()
+            if args.contract_action == "result":
+                return service.contract_result(task_id=args.task, execution_id=args.execution)
+            if args.contract_action == "approvals":
+                return service.contract_pending_approvals(args.limit)
+            return service.contract_global_changes(args.limit, args.cursor)
         if command == "policy":
             return {"path": str(service.policies.policy_path), "policy": service.policies.load()} if args.action == "show" else {"path": str(service.policies.policy_path)}
         if command == "export":

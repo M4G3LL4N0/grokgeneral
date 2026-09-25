@@ -9,7 +9,8 @@ It is not a general-purpose autonomous agent. GrokGeneral performs little expens
 - **Kernel:** `GrokGeneral` is the public service facade used by the CLI and available to future local services.
 - **Registries:** projects, resources, tasks, policies, usage, events, and cache metadata.
 - **Policy and routing:** deterministic, capability-aware, cost-aware, explainable decisions with fallbacks.
-- **Opportunity engine:** interpretable project importance × suitability × expiration urgency ÷ effective cost scoring. Scores are planning aids, not precision claims.
+- **Opportunity engine:** evidence-backed V2 candidates with stable work keys, project/resource health, blockers, validation readiness, cost/expiry signals, and deduplication. Scores are explainable planning aids, not precision claims.
+- **Scheduler and approvals:** bounded on-demand claims, same-repository mutation locks, narrow task/attempt approvals, and compact scheduler/result records.
 - **Context builder:** task-scoped packs with compact policy, one project, safe manifest/status data, and explicitly referenced files only.
 - **Adapters:** local shell is functional; OpenCode is a verified argv-based execution boundary; Cursor, ChatGPT, GrokBot, and GitHub remain optional capability/health boundaries.
 - **Persistence:** SQLite with WAL, transactions, a busy timeout, private permissions, and atomic JSON policy/cache/context writes.
@@ -174,18 +175,37 @@ Use `executor run` for the explicit OpenCode path. It requires `--allow-executio
 
 The pipeline captures the project path, Git branch/revision/status and a context hash before execution, invokes OpenCode with an explicit project directory and model, and stores a compact receipt in SQLite. Raw JSONL output is redacted and stored separately under `GG_STATE_DIR/execution-logs/`. A provider exit code of `0` is not considered successful until project validation passes. The executor never passes `--auto`, and it never stashes, resets, discards, commits, pushes, deploys, or spends credits.
 
+### Approvals
+
+Sensitive work uses durable, task/attempt-scoped approvals:
+
+```sh
+./gg approvals --json
+./gg approval request TASK_ID --actions modify,validate --attempt 1 --json
+./gg approval show APPROVAL_ID --json
+./gg approval approve APPROVAL_ID --json
+./gg approval reject APPROVAL_ID --reason "not authorized" --json
+```
+
+Approvals are narrow and single-use. A dirty repository, modify, commit, push, deploy, spend, external, network, destructive, and validation action cannot borrow another task's approval. The scheduler consumes approval IDs; it does not accept a blanket cycle-wide grant for new work.
+
 ### Opportunities and scheduling
 
 ```sh
 ./gg opportunities
+./gg opportunities --project gh0st --limit 10
 ./gg opportunities --resource space-bunny
 ./gg optimize
-./gg optimize --execute --max-tasks 5
+./gg optimize --queue --max-tasks 4
 ./gg schedule
-./gg schedule --execute
+./gg schedule --execute --concurrency 2 --max-tasks 4 --max-seconds 300
+./gg schedule --pause
+./gg schedule --resume
+./gg schedule --stop
+./gg schedule --status
 ```
 
-`optimize` and `schedule` are planning operations by default. `--execute` only queues proposal work or runs explicitly local task commands; it does not silently call paid providers or spend credits. The lightweight scheduler is an on-demand plan, not a background daemon.
+Opportunity V2 only emits concrete evidence-backed work: failing builds/tests, CI defects, documented TODOs, dependency/packaging hygiene, and justified architecture reviews. Repeated scans deduplicate by stable `work_key`; generic repository audits are not synthesized without evidence. `optimize` globally ranks unique work and reports task, project, executor, reason, cost class, and approval needs. `--queue` only materializes queued tasks; it does not call a provider. The scheduler is on-demand, bounded, and does not run against every project automatically.
 
 ### Events
 
@@ -217,19 +237,26 @@ Context references are constrained to the selected project. Traversal, hidden fi
 ./gg usage
 ./gg usage --project gh0st
 ./gg usage --resource space-bunny
-./gg usage --record --source measured --units 12 --project gh0st
+./gg usage --records --resource space-bunny --json
+./gg usage --record --source reported --unit tokens --units 120 --provider opencode --model opencode/space-bunny-free --resource space-bunny
 ./gg ask "Which projects need testing?"
 ./gg ask "What should Space Bunny work on this week?"
 ./gg ask "Which repos have unfinished builds?"
 ./gg ask "Where can Cursor credits create the most value?"
 ```
 
-Usage always identifies its source as `measured`, `user-entered`, `estimated`, or `unknown`. Unknown totals remain unknown; GrokGeneral does not fabricate cost precision. `ask` is deterministic by default and does not call an AI provider.
+Usage always identifies its source as `measured`, `reported`, `user-entered`, `estimated`, or `unknown`. Tokens, credits, and seconds are grouped separately; unknown totals remain unknown. GrokGeneral does not fabricate cost precision. `ask` is deterministic by default and does not call an AI provider.
 
 ### Health, export, and adapters
 
 ```sh
 ./gg status
+./gg status --json
+./gg status --full --json
+./gg contract status --json
+./gg contract result --execution EXECUTION_ID --json
+./gg contract approvals --json
+./gg contract changes --json
 ./gg doctor
 ./gg adapters
 ./gg adapter opencode health --json
@@ -238,14 +265,15 @@ Usage always identifies its source as `measured`, `user-entered`, `estimated`, o
 ./gg import backup.json
 ```
 
-`doctor` checks SQLite integrity, policy validity, project paths, duplicate identities, stale resources, event delivery state, and optional adapter health. Missing provider binaries are reported as degraded optional adapters, not startup failures. The verified OpenCode adapter invokes `opencode run --pure --format json --dir PROJECT --model PROVIDER/MODEL MESSAGE`; it does not add `--auto` or credentials.
+`status` is a bounded daily dashboard and never runs providers or validation merely to render. `--full` adds bounded project and execution details. The GrokBot contract is documented in [`docs/grokbot-integration.md`](docs/grokbot-integration.md). `doctor` checks SQLite integrity, policy validity, project paths, duplicate identities, stale resources, event delivery state, and optional adapter health. Missing provider binaries are reported as degraded optional adapters, not startup failures. The verified OpenCode adapter invokes `opencode run --pure --format json --dir PROJECT --model PROVIDER/MODEL MESSAGE`; it does not add `--auto` or credentials.
 
 ## Safety model
 
 - Read-only inspection, planning, and local testing are allowed by default.
 - Local commands require explicit argv and a bounded timeout.
-- OpenCode execution requires `--allow-execution`; repository validation requires `--allow-validate` or a project policy grant.
-- Network, spending, push, posting, privacy-sensitive, and destructive operations require explicit approval flags or policy approval.
+- OpenCode execution requires explicit execution permission; configured repository validation requires a `validate` approval.
+- Network, spending, push, posting, privacy-sensitive, dirty-repo, and destructive operations require narrow approval IDs or explicit direct-operator permission.
+- The scheduler defaults to two workers, four tasks, and five minutes per cycle, serializes mutation of one repository, and supports pause/stop.
 - The executor never passes OpenCode `--auto` and never performs Git stash/reset/discard, commit, push, deployment, or spending actions.
 - Provider adapters do not contain credentials and do not read or persist secrets.
 - Secret-shaped keys and common secret assignments are redacted before state, cache, event, context, execution logs, receipts, and output persistence.
@@ -260,17 +288,17 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q grokgeneral tests
 ```
 
-The tests cover persistence, atomic writes, concurrent writers, project/resource registries, explicit roots and identity, expiration/rerouting, policies, routing, task lifecycle, OpenCode adapter parsing, execution receipts, repository safety, validation, opportunities, events, context isolation, cache, usage, malformed input, offline behavior, CLI JSON, and service integration. The current offline suite contains 113 tests.
+The tests cover persistence, atomic writes, concurrent writers, project/resource registries, explicit roots and identity, expiration/rerouting, evidence-backed opportunities, durable approvals, bounded scheduler claims and repository locks, compact results, unit-aware usage, OpenCode adapter parsing, execution receipts, repository safety, validation, dashboard, GrokBot contract, events, context isolation, cache, malformed input, offline behavior, CLI JSON, and service integration. The current offline suite contains 150 tests.
 
-A real dogfood execution was run through GrokGeneral with the verified `opencode/space-bunny-free` model in a clean temporary Git project. It produced a completed receipt only after the registered validation command passed.
+A real dogfood execution was run through GrokGeneral with the verified `opencode/space-bunny-free` model in a clean temporary Git project. It produced a completed receipt only after the registered validation command passed. The Part 2 dogfood batch is run in clean temporary projects and never scans or mutates neighboring repositories.
 
 ## Deliberate v1 limitations
 
-- There is no persistent daemon, distributed broker, or HTTP server. The service facade is the boundary for a future local API/dashboard.
+- There is no persistent daemon, distributed broker, or HTTP server in Part 2. The service facade and `gg contract` commands are the integration boundary; a future localhost API must reuse the same compact contract.
 - Optional provider integrations expose capability and health boundaries; they do not guarantee vendor-specific workflows.
 - Backlog inspection proposes findings and tasks but never changes neighboring repositories.
 - Build status is evidence-based. GrokGeneral does not claim a build is broken without recorded evidence or an explicitly run local command.
 - The scheduler is on-demand; no background process consumes resources while the CLI is closed.
 - OpenCode is an explicit, one-task execution adapter; GrokGeneral does not manage a long-lived agent session, credential lifecycle, or autonomous tool approvals.
-- Git mutations and external side effects remain outside the executor boundary.
+- Git mutations and external side effects remain outside the executor boundary; narrow approvals describe intent but do not perform those actions.
 - The repository contains no marketing website; a future site belongs in `~/startups/grokgeneral-website/`.
