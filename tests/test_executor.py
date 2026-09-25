@@ -95,6 +95,13 @@ class ExecutorTests(unittest.TestCase):
         with self.assertRaises(SafetyBlockedError):
             self.service.executor_run(self.task.id, allow_execution=True)
 
+    def test_durable_validation_approval_can_be_consumed_by_executor(self):
+        approval = self.service.request_approval(self.task.id, ["validate"])
+        self.service.approval_approve(approval["id"])
+        result = self.service.executor_run(self.task.id, allow_execution=True, approval_ids=[approval["id"]])
+        self.assertEqual(result["task"]["status"], "completed")
+        self.assertEqual(self.service.approval_show(approval["id"])["status"], "consumed")
+
 
 if __name__ == "__main__":
     unittest.main()

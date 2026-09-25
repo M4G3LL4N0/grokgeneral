@@ -72,11 +72,33 @@ class Executor:
         failed = self.service.tasks.fail(task.id, error, increment_attempt=False)
         return receipt, failed.to_dict()
 
-    def run(self, task_id: str, dry_run: bool = False, approvals: Any = None, allow_execution: bool = False, model: str | None = None, timeout: int = 120) -> dict[str, Any]:
+    def _required_approval_actions(self, task: Task, commands: list[list[str]]) -> set[str]:
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        actions: set[str] = set()
+        if metadata.get("modify") or metadata.get("requires_modify"):
+            actions.add("modify")
+        command = metadata.get("command")
+        if isinstance(command, (list, tuple)) and command and all(isinstance(item, str) for item in command):
+            actions.update(self.service.tasks.classify_command_actions(list(command)))
+        for key in ("network", "push", "destructive", "spend", "commit", "deploy", "external", "privacy", "dirty-repo"):
+            if metadata.get(key) or metadata.get(f"requires_{key.replace('-', '_')}"):
+                actions.add(key)
+        if commands:
+            actions.add("validate")
+        return actions
+
+    def run(self, task_id: str, dry_run: bool = False, approvals: Any = None, approval_ids: list[str] | None = None, allow_execution: bool = False, model: str | None = None, timeout: int = 120) -> dict[str, Any]:
         task = self.service.tasks.get(task_id)
         if not all(self.service.tasks.get(dependency).status == "completed" for dependency in task.dependencies):
             raise ValidationError("task dependencies are not complete")
         project = self._project(task)
+        commands = self.service.project_validation(project.id)
+        supplied = set(approvals or [])
+        if approval_ids and not dry_run:
+            required = self._required_approval_actions(task, commands)
+            if required:
+                supplied.update(self.service.approvals.consume(approval_ids, task, task.attempts + 1, required))
+        approvals = supplied
         decision = self.service.router.route(task, project=project, approvals=approvals)
         resource = self._resource(decision.to_dict())
         if resource.provider != "opencode":
@@ -103,7 +125,6 @@ class Executor:
             except SafetyBlockedError:
                 self.service.events.emit("POLICY_BLOCKED", {"task_id": task.id, "action": "modify"})
                 raise
-        commands = self.service.project_validation(project.id)
         if commands:
             try:
                 self.permissions.require("validate", approvals)

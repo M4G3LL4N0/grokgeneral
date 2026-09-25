@@ -258,6 +258,28 @@ def _build_parser() -> argparse.ArgumentParser:
     task_fail.add_argument("id")
     task_fail.add_argument("error")
 
+    approvals = commands.add_parser("approvals")
+    approvals.add_argument("--status")
+    approvals.add_argument("--task")
+    approval = commands.add_parser("approval")
+    approval_sub = approval.add_subparsers(dest="action", required=True)
+    approval_request = approval_sub.add_parser("request")
+    approval_request.add_argument("task_id")
+    approval_request.add_argument("--actions", required=True)
+    approval_request.add_argument("--attempt", type=int)
+    approval_request.add_argument("--payload-hash")
+    approval_request.add_argument("--work-key")
+    approval_request.add_argument("--expires")
+    approval_show = approval_sub.add_parser("show")
+    approval_show.add_argument("id")
+    approval_approve = approval_sub.add_parser("approve")
+    approval_approve.add_argument("id")
+    approval_approve.add_argument("--actor", default="cli")
+    approval_reject = approval_sub.add_parser("reject")
+    approval_reject.add_argument("id")
+    approval_reject.add_argument("--reason")
+    approval_reject.add_argument("--actor", default="cli")
+
     route = commands.add_parser("route")
     route.add_argument("goal", nargs="?")
     route.add_argument("--project")
@@ -309,6 +331,7 @@ def _build_parser() -> argparse.ArgumentParser:
     executor_run.add_argument("--allow-push", action="store_true")
     executor_run.add_argument("--allow-destructive", action="store_true")
     executor_run.add_argument("--allow-spend", action="store_true")
+    executor_run.add_argument("--approval-id", action="append")
     executor_run.add_argument("--model")
     executor_run.add_argument("--timeout", type=int, default=120)
 
@@ -556,6 +579,16 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
                 return service.tasks.fail(args.id, args.error).to_dict()
             if action == "executions":
                 return service.executions_list(task_id=args.id)
+        if command == "approvals":
+            return service.approvals_list(status=args.status, task_id=args.task)
+        if command == "approval":
+            if args.action == "request":
+                return service.request_approval(args.task_id, _csv(args.actions), attempt=args.attempt, payload_hash=args.payload_hash, work_key=args.work_key, expires_at=args.expires)
+            if args.action == "show":
+                return service.approval_show(args.id)
+            if args.action == "approve":
+                return service.approval_approve(args.id, args.actor)
+            return service.approval_reject(args.id, args.reason, args.actor)
         if command == "route":
             if not args.goal:
                 raise ValidationError("route requires a goal")
@@ -596,7 +629,7 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
             return service.usage.summary(args.project, args.resource, args.task_id)
         if command == "executor":
             approvals = {name.removeprefix("allow-") for name in ("allow-modify", "allow-validate", "allow-network", "allow-push", "allow-destructive", "allow-spend") if getattr(args, name, False)}
-            return service.executor_run(args.task_id, dry_run=args.dry_run, approvals=approvals, allow_execution=args.allow_execution, model=args.model, timeout=args.timeout)
+            return service.executor_run(args.task_id, dry_run=args.dry_run, approvals=approvals, approval_ids=args.approval_id, allow_execution=args.allow_execution, model=args.model, timeout=args.timeout)
         if command == "executions":
             return service.executions_list(task_id=args.task, project=args.project)
         if command == "execution":

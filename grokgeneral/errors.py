@@ -20,3 +20,7 @@ class ProviderUnavailableError(GrokGeneralError):
 
 class StateError(GrokGeneralError):
     exit_code = 6
+
+
+class ApprovalError(GrokGeneralError):
+    exit_code = 7

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import AdapterRegistry
+from .approvals import ApprovalRegistry
 from .backlog import BacklogInspector
 from .cache import Cache
 from .context import ContextBuilder
@@ -32,6 +33,7 @@ class GrokGeneral:
         self.offline = offline
         self.state.initialize()
         self.events = EventBus(self.state)
+        self.approvals = ApprovalRegistry(self.state, self.events)
         self.policies = PolicyEngine(self.state)
         self.policies.load()
         self.cache = Cache(self.state)
@@ -116,6 +118,23 @@ class GrokGeneral:
     def add_task(self, data: dict[str, Any]) -> Task:
         return self.tasks.add(data)
 
+    def request_approval(self, task_id: str, actions: Any, attempt: int | None = None, payload_hash: str | None = None, work_key: str | None = None, expires_at: str | None = None) -> dict[str, Any]:
+        task = self.tasks.get(task_id)
+        return self.approvals.request(task, attempt if attempt is not None else task.attempts + 1, actions, payload_hash=payload_hash, project_id=task.project, work_key=work_key, expires_at=expires_at)
+
+    def approvals_list(self, status: str | None = None, task_id: str | None = None) -> list[dict[str, Any]]:
+        self.approvals.expire()
+        return self.approvals.list(status=status, task_id=task_id)
+
+    def approval_show(self, approval_id: str) -> dict[str, Any]:
+        return self.approvals.show(approval_id)
+
+    def approval_approve(self, approval_id: str, actor: str = "cli") -> dict[str, Any]:
+        return self.approvals.approve(approval_id, actor=actor)
+
+    def approval_reject(self, approval_id: str, reason: str | None = None, actor: str = "cli") -> dict[str, Any]:
+        return self.approvals.reject(approval_id, reason=reason, actor=actor)
+
     def update_task(self, task_id: str, changes: dict[str, Any]) -> Task:
         return self.tasks.update(task_id, changes)
 
@@ -157,8 +176,8 @@ class GrokGeneral:
                 project_path = None
         return self.tasks.run(task_id, approvals=approvals, project_path=project_path)
 
-    def executor_run(self, task_id: str, dry_run: bool = False, approvals: Any = None, allow_execution: bool = False, model: str | None = None, timeout: int = 120) -> dict[str, Any]:
-        return self.executor.run(task_id, dry_run=dry_run, approvals=approvals, allow_execution=allow_execution, model=model, timeout=timeout)
+    def executor_run(self, task_id: str, dry_run: bool = False, approvals: Any = None, approval_ids: list[str] | None = None, allow_execution: bool = False, model: str | None = None, timeout: int = 120) -> dict[str, Any]:
+        return self.executor.run(task_id, dry_run=dry_run, approvals=approvals, approval_ids=approval_ids, allow_execution=allow_execution, model=model, timeout=timeout)
 
     def executions_list(self, task_id: str | None = None, project: str | None = None) -> list[dict[str, Any]]:
         return self.executions.list(task_id=task_id, project=project)

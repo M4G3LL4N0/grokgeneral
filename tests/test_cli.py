@@ -83,6 +83,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, errors)
         self.assertIn("opportunities", json.loads(output))
 
+    def test_approval_queue_commands_are_structured(self):
+        code, output, errors = self.call("task", "add", "repair fixture", "--json")
+        self.assertEqual(code, 0, errors)
+        task = json.loads(output)
+        code, output, errors = self.call("approval", "request", task["id"], "--actions", "modify,validate", "--attempt", "1", "--json")
+        self.assertEqual(code, 0, errors)
+        approval = json.loads(output)
+        self.assertEqual(approval["status"], "pending")
+        code, output, errors = self.call("approvals", "--json")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)[0]["id"], approval["id"])
+        code, output, errors = self.call("approval", "approve", approval["id"], "--json")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["status"], "approved")
+        code, output, errors = self.call("approval", "show", approval["id"], "--json")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["task_id"], task["id"])
+
     def test_optimize_is_plan_only_without_execute(self):
         code, output, errors = self.call("optimize", "--json")
         self.assertEqual(code, 0, errors)
