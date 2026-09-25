@@ -94,6 +94,19 @@ class Scheduler:
                 actions.add("validate")
         return sorted(actions)
 
+    def _approval_ids_for_task(self, task_id: str, approval_ids: list[str] | None) -> list[str]:
+        if not approval_ids or self.service is None:
+            return list(approval_ids or [])
+        values = []
+        for approval_id in approval_ids:
+            try:
+                approval = self.service.approvals.show(approval_id)
+            except Exception:
+                continue
+            if approval.get("task_id") == task_id:
+                values.append(approval_id)
+        return values
+
     def _deadline_expired(self, task: Task) -> bool | None:
         if not task.deadline:
             return None
@@ -294,7 +307,8 @@ class Scheduler:
             if self._control().get("stop") or self._control().get("state") == "paused":
                 skipped += 1
                 continue
-            if entry.get("approval_needed") and not approval_ids:
+            task_approval_ids = self._approval_ids_for_task(str(entry["task_id"]), approval_ids)
+            if entry.get("approval_needed") and not task_approval_ids:
                 try:
                     if entry.get("status") == "queued":
                         self.tasks.update(entry["task_id"], {"status": "awaiting_approval"})
@@ -303,7 +317,7 @@ class Scheduler:
                 awaiting_approval += 1
                 skipped += 1
                 continue
-            claim, reason = self._claim(entry, run_id, config, approval_ids)
+            claim, reason = self._claim(entry, run_id, config, task_approval_ids)
             if claim is None:
                 if reason == "same_repo_conflict":
                     same_repo_conflicts += 1
@@ -316,7 +330,7 @@ class Scheduler:
                     self._release_claim(claim["id"], "failed")
                     skipped += 1
                     continue
-            selected.append({**entry, "claim": claim})
+            selected.append({**entry, "claim": claim, "approval_ids": task_approval_ids})
         completed = 0
         failed = 0
         retry_queued = 0
@@ -325,7 +339,7 @@ class Scheduler:
             futures = {}
             for entry in selected:
                 task = self.tasks.get(entry["task_id"])
-                futures[pool.submit(self._dispatch, task, entry, approval_ids or [], approvals)] = entry
+                futures[pool.submit(self._dispatch, task, entry, entry.get("approval_ids", []), approvals)] = entry
             for future in as_completed(futures):
                 entry = futures[future]
                 try:

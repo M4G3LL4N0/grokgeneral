@@ -87,6 +87,26 @@ class SchedulerConcurrencyTests(unittest.TestCase):
         self.assertEqual(first["selected"], 1)
         self.assertEqual(second["selected"], 0)
 
+    def test_scheduler_scopes_approval_ids_to_each_task(self):
+        self.service.set_project_validation("repo", [["python3", "-c", "print('ok')"]])
+        first = self.add_task("approved-one")
+        second = self.add_task("approved-two")
+        approval_ids = []
+        for task in (first, second):
+            approval = self.service.request_approval(task.id, ["validate"])
+            self.service.approval_approve(approval["id"])
+            approval_ids.append(approval["id"])
+
+        def consume(task, ids):
+            self.service.approvals.consume(ids, task, 1, {"validate"})
+            return {"status": "completed", "task_id": task.id}
+
+        self.scheduler.dispatcher = consume
+        result = self.scheduler.run_cycle(execute=True, approval_ids=approval_ids, config=SchedulerConfig(concurrency=2, max_tasks=2, max_seconds=10, max_attempts=1))
+        self.assertEqual(result["completed"], 2)
+        self.assertEqual(self.service.approval_show(approval_ids[0])["status"], "consumed")
+        self.assertEqual(self.service.approval_show(approval_ids[1])["status"], "consumed")
+
     def test_retry_failed_is_opt_in_and_requeues_below_attempt_limit(self):
         attempts = {"count": 0}
 
