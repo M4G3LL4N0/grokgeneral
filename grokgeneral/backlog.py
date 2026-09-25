@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -13,12 +14,18 @@ from .timeutil import isoformat, utc_now
 
 _TEXT_SUFFIXES = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb", ".md", ".toml", ".json", ".yaml", ".yml"}
 _SECRET_NAMES = {".env", "credentials", "secrets"}
+_PRUNED_DIRS = {"node_modules", "dist", "build", "vendor", ".git", "__pycache__", ".next", "target", ".venv", "venv", "coverage", ".cache", "site-packages", "Pods", ".terraform", "bower_components", "jspm_packages"}
 
 
 class BacklogInspector:
+    MAX_FILES = 200
+    MAX_ENTRIES = 20000
+    MAX_FILE_BYTES = 512 * 1024
+
     def __init__(self, state: StateStore, projects: ProjectRegistry) -> None:
         self.state = state
         self.projects = projects
+        self.last_scan_stats: dict[str, Any] = {}
         self.state.initialize()
 
     def _project(self, project: Project | str | None) -> Project:
@@ -31,24 +38,53 @@ class BacklogInspector:
             raise ValidationError("no projects available for inspection")
         return values[0]
 
-    def _safe_files(self, root: Path, limit: int = 200) -> list[Path]:
+    @staticmethod
+    def _is_pruned(name: str) -> bool:
+        return name.startswith(".") or name in _PRUNED_DIRS
+
+    def _walk_files(self, root: Path, limit: int = MAX_FILES, max_entries: int = MAX_ENTRIES) -> tuple[list[Path], dict[str, Any]]:
+        """Collect candidate text files with a hard bound on filesystem work.
+
+        Directory pruning happens in place during os.walk so excluded trees such as
+        node_modules or .git are never descended into, and max_entries caps the number
+        of file names examined. Both bounds keep scan cost independent of repo size.
+        """
         values: list[Path] = []
+        entries_visited = 0
+        pruned_dirs = 0
+        truncated = False
         try:
-            candidates = root.rglob("*")
-            for path in candidates:
-                if len(values) >= limit:
+            for dirpath, dirnames, filenames in os.walk(root):
+                kept_dirs = []
+                for name in dirnames:
+                    if self._is_pruned(name):
+                        pruned_dirs += 1
+                    else:
+                        kept_dirs.append(name)
+                dirnames[:] = kept_dirs
+                for name in filenames:
+                    if entries_visited >= max_entries or len(values) >= limit:
+                        truncated = True
+                        break
+                    entries_visited += 1
+                    if name in _SECRET_NAMES or Path(name).suffix.lower() not in _TEXT_SUFFIXES:
+                        continue
+                    path = Path(dirpath) / name
+                    try:
+                        if path.is_symlink():
+                            continue
+                        values.append(path)
+                    except OSError:
+                        continue
+                if truncated:
                     break
-                if not path.is_file() or path.is_symlink():
-                    continue
-                relative_parts = path.relative_to(root).parts
-                if any(part.startswith(".") or part in {"node_modules", "dist", "build", "vendor"} for part in relative_parts):
-                    continue
-                if path.name in _SECRET_NAMES or path.suffix.lower() not in _TEXT_SUFFIXES:
-                    continue
-                values.append(path)
         except OSError:
-            return values
-        return values
+            pass
+        return values, {"entries_visited": entries_visited, "pruned_dirs": pruned_dirs, "truncated": truncated, "files_kept": len(values)}
+
+    def _safe_files(self, root: Path, limit: int = MAX_FILES) -> list[Path]:
+        files, _stats = self._walk_files(root, limit=limit)
+        return files
 
     def _finding(self, project: Project, kind: str, severity: str, path: str | None, detail: str, line: int | None = None, marker: str | None = None, source: str = "backlog") -> dict[str, Any]:
         observed_at = isoformat(utc_now())
@@ -72,6 +108,7 @@ class BacklogInspector:
         target = self._project(project)
         root = Path(target.path).expanduser().resolve()
         if not root.is_dir():
+            self.last_scan_stats = {"entries_visited": 0, "pruned_dirs": 0, "truncated": False, "files_kept": 0, "files_scanned": 0}
             return [self._finding(target, "missing_path", "error", None, "project path is missing", source="filesystem")]
         findings: list[dict[str, Any]] = []
         metadata = target.metadata if isinstance(target.metadata, dict) else {}
@@ -82,12 +119,16 @@ class BacklogInspector:
         for key, kind in (("dependency_issue", "dependency_cleanup"), ("architecture_review", "architecture_review")):
             if metadata.get(key):
                 findings.append(self._finding(target, kind, "medium", None, f"project metadata requests {kind.replace('_', ' ')}", source="project-metadata"))
-        files = self._safe_files(root)
+        files, stats = self._walk_files(root)
+        files_scanned = 0
         for path in files:
             try:
+                if path.stat().st_size > self.MAX_FILE_BYTES:
+                    continue
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 continue
+            files_scanned += 1
             relative = str(path.relative_to(root))
             for line_number, text in enumerate(lines, 1):
                 match = re.search(r"\b(TODO|FIXME|XXX)\b", text, re.I)
@@ -112,6 +153,7 @@ class BacklogInspector:
         docs = [path for path in files if path.suffix.lower() == ".md"]
         if not docs:
             findings.append(self._finding(target, "stale_docs", "low", "README/docs", "no readable project documentation was found", source="repository-structure"))
+        self.last_scan_stats = {**stats, "files_scanned": files_scanned}
         return findings
 
     def propose(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
