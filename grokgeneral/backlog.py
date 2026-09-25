@@ -15,6 +15,27 @@ from .timeutil import isoformat, utc_now
 _TEXT_SUFFIXES = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb", ".md", ".toml", ".json", ".yaml", ".yml"}
 _SECRET_NAMES = {".env", "credentials", "secrets"}
 _PRUNED_DIRS = {"node_modules", "dist", "build", "vendor", ".git", "__pycache__", ".next", "target", ".venv", "venv", "coverage", ".cache", "site-packages", "Pods", ".terraform", "bower_components", "jspm_packages"}
+_MARKER = re.compile(r"\b(TODO|FIXME|XXX)\b", re.I)
+_STRING_LITERAL = re.compile(r"'[^']*'|\"[^\"]*\"|`[^`]*`")
+_TEST_PARTS = {"test", "tests", "__tests__", "spec", "specs", "fixtures", "__mocks__", "e2e", "cypress", "testdata", "test_data", "testfixtures"}
+_TEST_NAME = re.compile(r"(?:^|[._-])(?:test|tests|spec|fixture|fixtures|mock|mocks|conftest)(?:[._-]|$)", re.I)
+_GENERATED_NAME = re.compile(r"(?:^|[._-])(?:generated|min|bundle|autogen)(?:[._-]|$)|_pb2(?:[._-]|\.py$)|\.pb\.(?:go|ts|js)$", re.I)
+_DOCUMENTATION_SUFFIXES = {".md", ".mdx", ".rst", ".txt", ".adoc"}
+_FINDING_CONFIDENCE = {
+    "missing_path": "high",
+    "failing_build": "high",
+    "failing_tests": "high",
+    "ci_failure": "high",
+    "dependency_cleanup": "high",
+    "architecture_review": "high",
+    "missing_tests": "high",
+    "missing_ci": "high",
+    "missing_license": "high",
+    "incomplete_scripts": "high",
+    "malformed_manifest": "high",
+    "stale_docs": "high",
+    "todo": "medium",
+}
 
 
 class BacklogInspector:
@@ -86,6 +107,27 @@ class BacklogInspector:
         files, _stats = self._walk_files(root, limit=limit)
         return files
 
+    @staticmethod
+    def _marker_in_code(text: str) -> re.Match[str] | None:
+        """Find a work marker outside string and regex literals.
+
+        A marker inside quotes is data the code handles, not outstanding work:
+        'k !== "fixme"' filters a tag, and r"\\b(TODO|FIXME)\\b" defines a pattern.
+        Markers in comments and bare code remain reportable.
+        """
+        return _MARKER.search(_STRING_LITERAL.sub(" ", text))
+
+    @staticmethod
+    def _ignore_reason(relative: str) -> str | None:
+        path = Path(relative)
+        if path.suffix.lower() in _DOCUMENTATION_SUFFIXES:
+            return "documentation"
+        if any(part.lower() in _TEST_PARTS for part in path.parts) or _TEST_NAME.search(path.stem):
+            return "tests"
+        if _GENERATED_NAME.search(path.name):
+            return "generated"
+        return None
+
     def _finding(self, project: Project, kind: str, severity: str, path: str | None, detail: str, line: int | None = None, marker: str | None = None, source: str = "backlog") -> dict[str, Any]:
         observed_at = isoformat(utc_now())
         material = {"project": project.id, "kind": kind, "path": path or "", "line": line, "marker": marker or "", "detail": detail}
@@ -101,14 +143,15 @@ class BacklogInspector:
             "evidence": detail,
             "observed_at": observed_at,
             "source": source,
+            "confidence": _FINDING_CONFIDENCE.get(kind, "medium"),
             "fingerprint": hashlib.sha256(canonical_json(material).encode("utf-8")).hexdigest(),
         }
 
-    def inspect(self, project: Project | str | None = None) -> list[dict[str, Any]]:
+    def inspect(self, project: Project | str | None = None, include_ignored: bool = False) -> list[dict[str, Any]]:
         target = self._project(project)
         root = Path(target.path).expanduser().resolve()
         if not root.is_dir():
-            self.last_scan_stats = {"entries_visited": 0, "pruned_dirs": 0, "truncated": False, "files_kept": 0, "files_scanned": 0}
+            self.last_scan_stats = {"entries_visited": 0, "pruned_dirs": 0, "truncated": False, "files_kept": 0, "files_scanned": 0, "markers_reported": 0, "markers_ignored_documentation": 0, "markers_ignored_tests": 0, "markers_ignored_generated": 0, "markers_ignored_literals": 0}
             return [self._finding(target, "missing_path", "error", None, "project path is missing", source="filesystem")]
         findings: list[dict[str, Any]] = []
         metadata = target.metadata if isinstance(target.metadata, dict) else {}
@@ -121,6 +164,8 @@ class BacklogInspector:
                 findings.append(self._finding(target, kind, "medium", None, f"project metadata requests {kind.replace('_', ' ')}", source="project-metadata"))
         files, stats = self._walk_files(root)
         files_scanned = 0
+        markers_reported = 0
+        ignored = {"documentation": 0, "tests": 0, "generated": 0, "literals": 0}
         for path in files:
             try:
                 if path.stat().st_size > self.MAX_FILE_BYTES:
@@ -130,10 +175,20 @@ class BacklogInspector:
                 continue
             files_scanned += 1
             relative = str(path.relative_to(root))
+            reason = self._ignore_reason(relative)
+            if reason is not None and not include_ignored:
+                ignored[reason] += sum(1 for text in lines if _MARKER.search(text))
+                continue
+            if reason is not None:
+                ignored[reason] += sum(1 for text in lines if _MARKER.search(text))
             for line_number, text in enumerate(lines, 1):
-                match = re.search(r"\b(TODO|FIXME|XXX)\b", text, re.I)
-                if match:
-                    findings.append(self._finding(target, "todo", "low", relative, text.strip()[:240], line_number, match.group(1).upper(), "source-marker"))
+                match = self._marker_in_code(text) if not include_ignored else _MARKER.search(text)
+                if not match:
+                    if _MARKER.search(text):
+                        ignored["literals"] += 1
+                    continue
+                markers_reported += 1
+                findings.append(self._finding(target, "todo", "low", relative, text.strip()[:240], line_number, match.group(1).upper(), "source-marker"))
         test_files = [path for path in files if any(part in {"test", "tests", "__tests__", "spec"} for part in path.relative_to(root).parts) or re.search(r"(?:^|[._-])(?:test|spec)(?:[._-]|$)", path.stem, re.I)]
         if not test_files and (root / "package.json").exists():
             findings.append(self._finding(target, "missing_tests", "medium", "package.json", "no obvious test files were found", source="repository-structure"))
@@ -153,7 +208,15 @@ class BacklogInspector:
         docs = [path for path in files if path.suffix.lower() == ".md"]
         if not docs:
             findings.append(self._finding(target, "stale_docs", "low", "README/docs", "no readable project documentation was found", source="repository-structure"))
-        self.last_scan_stats = {**stats, "files_scanned": files_scanned}
+        self.last_scan_stats = {
+            **stats,
+            "files_scanned": files_scanned,
+            "markers_reported": markers_reported,
+            "markers_ignored_documentation": ignored["documentation"],
+            "markers_ignored_tests": ignored["tests"],
+            "markers_ignored_generated": ignored["generated"],
+            "markers_ignored_literals": ignored["literals"],
+        }
         return findings
 
     def propose(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:

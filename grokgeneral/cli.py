@@ -381,6 +381,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backlog = commands.add_parser("backlog")
     backlog.add_argument("--project")
     backlog.add_argument("--live", action="store_true", help="inspect the filesystem instead of reading persisted summaries")
+    backlog.add_argument("--all-markers", action="store_true", help="with --live, include markers from tests, docs, and generated files")
     backlog_sub = backlog.add_subparsers(dest="backlog_action")
     backlog_scan = backlog_sub.add_parser("scan", help="explicitly rescan repositories and persist health summaries")
     backlog_scan.add_argument("--project")
@@ -388,6 +389,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backlog_scan.add_argument("--max-age", type=int)
     backlog_scan.add_argument("--live", action="store_true", help="also return the live findings from this scan")
     backlog_scan.add_argument("--no-opportunities", action="store_true", help="skip rebuilding the opportunity digest")
+    backlog_scan.add_argument("--all-markers", action="store_true", help="include markers from tests, docs, and generated files")
     adapters = commands.add_parser("adapters")
     adapter = commands.add_parser("adapter")
     adapter_sub = adapter.add_subparsers(dest="action", required=True)
@@ -736,11 +738,13 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
                     include_opportunities=not bool(getattr(args, "no_opportunities", False)),
                 )
                 if getattr(args, "live", False):
-                    findings = service.backlog.inspect(project) if project else [item for value in service.projects.list() for item in service.backlog.inspect(value)]
+                    include_ignored = bool(getattr(args, "all_markers", False))
+                    findings = service.backlog.inspect(project, include_ignored=include_ignored) if project else [item for value in service.projects.list() for item in service.backlog.inspect(value, include_ignored=include_ignored)]
                     return {**result, "source": "live_inspection", "findings": findings, "proposals": service.backlog.propose(findings)}
                 return {**result, "source": "persisted_summaries"}
             if getattr(args, "live", False):
-                findings = service.backlog.inspect(project) if project else [item for value in service.projects.list() for item in service.backlog.inspect(value)]
+                include_ignored = bool(getattr(args, "all_markers", False))
+                findings = service.backlog.inspect(project, include_ignored=include_ignored) if project else [item for value in service.projects.list() for item in service.backlog.inspect(value, include_ignored=include_ignored)]
                 return {"source": "live_inspection", "findings": findings, "proposals": service.backlog.propose(findings)}
             identifiers = [service.projects.get(project).id] if project else None
             summaries = service.status_model.summaries(identifiers)
