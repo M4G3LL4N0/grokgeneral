@@ -394,6 +394,9 @@ def _build_parser() -> argparse.ArgumentParser:
     opencode = adapter_sub.add_parser("opencode")
     opencode_sub = opencode.add_subparsers(dest="opencode_action", required=True)
     opencode_sub.add_parser("health")
+    opencode_sub.add_parser("discover")
+    opencode_configure = opencode_sub.add_parser("configure")
+    opencode_configure.add_argument("path", help="explicit path to the opencode executable")
     opencode_models = opencode_sub.add_parser("models")
     opencode_models.add_argument("--provider")
     opencode_models.add_argument("--refresh", action="store_true")
@@ -750,6 +753,12 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
         if command == "adapter":
             if args.opencode_action == "health":
                 return service.adapters.get("opencode").health()
+            if args.opencode_action == "discover":
+                path, via = service.adapters.discover("opencode")
+                return {"available": bool(path), "executable": path, "resolved_via": via}
+            if args.opencode_action == "configure":
+                resolved = service.adapters.set_executable("opencode", args.path)
+                return {"configured": True, "executable": resolved, "resolved_via": "configured"}
             if args.opencode_action == "models":
                 return service.adapters.models("opencode", args.provider, args.refresh)
             return service.adapters.run("opencode", args.message, cwd=args.project, model=args.model, timeout=args.timeout, dry_run=args.dry_run, allow_execution=args.allow_execution)

@@ -474,6 +474,20 @@ class StateStore:
                 atomic_write_json(self.policy_path, snapshot["policies"])
         self.audit("import", "state", data={"tables": sorted(snapshot.get("tables", {}))})
 
+    def get_meta(self, key: str) -> str | None:
+        if not self._initialized:
+            self.initialize()
+        connection = self.connect()
+        try:
+            row = connection.execute("SELECT value FROM meta WHERE key=?", (str(key),)).fetchone()
+            return str(row[0]) if row else None
+        finally:
+            connection.close()
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self.transaction() as connection:
+            connection.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)", (str(key), str(value)))
+
     def health(self) -> dict[str, Any]:
         if not self._initialized:
             self.initialize()

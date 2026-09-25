@@ -115,14 +115,39 @@ class OptionalProviderAdapter:
         return {"adapter": self.name, "returncode": result.returncode, "stdout": redact(result.stdout), "stderr": redact(result.stderr), "command": command}
 
 
+def _is_executable(path: str | None) -> bool:
+    if not path:
+        return False
+    candidate = Path(path).expanduser()
+    return candidate.is_file() and os.access(candidate, os.X_OK)
+
+
+def _known_local_locations(name: str) -> list[str]:
+    """Return install locations derived from the environment, never hardcoded absolutes."""
+    home = Path(os.path.expanduser("~"))
+    return [
+        str(home / ".opencode" / "bin" / name),
+        str(home / ".local" / "bin" / name),
+        str(home / "bin" / name),
+        str(Path("/opt/homebrew/bin") / name),
+        str(Path("/usr/local/bin") / name),
+    ]
+
+
 class OpenCodeAdapter(OptionalProviderAdapter):
     name = "opencode"
     capability_names = ["coding", "repo-analysis", "refactoring", "testing"]
 
-    def __init__(self, executable: str | None = None, timeout: int = 120) -> None:
+    def __init__(self, executable: str | None = None, timeout: int = 120, resolved_via: str = "unavailable") -> None:
         super().__init__(executable=executable)
         self.timeout = timeout
+        self.resolved_via = resolved_via
         self._version: str | None = None
+
+    def _resolved(self) -> str | None:
+        if _is_executable(self.executable):
+            return str(Path(self.executable).expanduser())
+        return shutil.which(self.executable or self.name)
 
     def _run_process(self, command: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
         resolved = self._resolved()
@@ -138,15 +163,16 @@ class OpenCodeAdapter(OptionalProviderAdapter):
 
     def health(self) -> dict[str, Any]:
         resolved = self._resolved()
+        searched = _known_local_locations(self.name)
         if not resolved:
-            return {"available": False, "executable": self.executable, "version": None, "models_command": "opencode models [provider]", "capabilities": self.capabilities()}
+            return {"available": False, "executable": self.executable, "resolved_via": "unavailable", "searched": searched, "version": None, "models_command": "opencode models [provider]", "capabilities": self.capabilities()}
         try:
             result = self._run_process(["--version"], timeout=min(self.timeout, 15))
             version = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else None
             self._version = version
         except (ProviderUnavailableError, TimeoutError):
             version = None
-        return {"available": True, "executable": resolved, "version": version, "models_command": "opencode models [provider]", "run_command": "opencode run --pure --format json --dir PROJECT --model PROVIDER/MODEL MESSAGE", "capabilities": self.capabilities()}
+        return {"available": True, "executable": resolved, "resolved_via": self.resolved_via, "searched": searched, "version": version, "models_command": "opencode models [provider]", "run_command": "opencode run --pure --format json --dir PROJECT --model PROVIDER/MODEL MESSAGE", "capabilities": self.capabilities()}
 
     def models(self, provider: str | None = None, refresh: bool = False) -> list[dict[str, str]]:
         command = ["models"]
@@ -273,17 +299,74 @@ class GitHubAdapter(OptionalProviderAdapter):
 
 
 class AdapterRegistry:
+    META_PREFIX = "adapters."
+
     def __init__(self, state: StateStore, policies: PolicyEngine | None = None) -> None:
         self.state = state
         self.local = LocalShellAdapter(policies)
+        opencode_path, opencode_via = self.discover("opencode")
         self.adapters: dict[str, Adapter] = {
             "local-shell": self.local,
-            "opencode": OpenCodeAdapter(),
+            "opencode": OpenCodeAdapter(executable=opencode_path, resolved_via=opencode_via),
             "cursor": CursorAdapter(),
             "chatgpt": ChatGPTAdapter(),
             "grokbot": GrokBotAdapter(),
             "github": GitHubAdapter(),
         }
+
+    def _meta_key(self, name: str) -> str:
+        return f"{self.META_PREFIX}{name}.executable"
+
+    def _configured_key(self, name: str) -> str:
+        return f"{self.META_PREFIX}{name}.configured"
+
+    def discover(self, name: str) -> tuple[str | None, str]:
+        """Resolve an optional provider binary through explicit configuration first.
+
+        Order: explicitly configured path, environment override, previously
+        discovered path, PATH, then known local install locations. The discovered
+        result is persisted so later runs resolve the same binary even when the
+        PATH they inherit differs.
+        """
+        configured = self.state.get_meta(self._configured_key(name))
+        if _is_executable(configured):
+            return str(Path(str(configured)).expanduser()), "configured"
+        override = os.environ.get("GG_OPENCODE_BIN" if name == "opencode" else f"GG_{name.upper()}_BIN")
+        if _is_executable(override):
+            self.state.set_meta(self._meta_key(name), str(override))
+            return str(Path(str(override)).expanduser()), "environment"
+        remembered = self.state.get_meta(self._meta_key(name))
+        if _is_executable(remembered):
+            return str(Path(str(remembered)).expanduser()), "persisted"
+        found = shutil.which(name)
+        if found:
+            self.state.set_meta(self._meta_key(name), found)
+            return found, "path"
+        for candidate in _known_local_locations(name):
+            if _is_executable(candidate):
+                self.state.set_meta(self._meta_key(name), candidate)
+                return candidate, "known_location"
+        return None, "unavailable"
+
+    def set_executable(self, name: str, path: str) -> str:
+        key = str(name).strip().lower()
+        if key not in self.adapters:
+            raise ProviderUnavailableError(f"unknown adapter: {name}")
+        if not _is_executable(path):
+            raise ValidationError(f"{key} executable is not an executable file: {path}")
+        resolved = str(Path(path).expanduser())
+        self.state.set_meta(self._configured_key(key), resolved)
+        self.state.set_meta(self._meta_key(key), resolved)
+        adapter = self.adapters[key]
+        if hasattr(adapter, "executable"):
+            adapter.executable = resolved
+        if hasattr(adapter, "resolved_via"):
+            adapter.resolved_via = "configured"
+        self.state.audit("adapter.configured", "adapter", key, {"executable": resolved})
+        return resolved
+
+    def executable(self, name: str) -> str | None:
+        return self.get(name)._resolved()  # type: ignore[attr-defined]
 
     def all(self) -> list[Adapter]:
         return list(self.adapters.values())
