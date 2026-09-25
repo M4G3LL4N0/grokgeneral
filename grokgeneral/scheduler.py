@@ -24,6 +24,7 @@ class SchedulerConfig:
     max_seconds: float = 300.0
     max_attempts: int = 2
     retry_failed: bool = False
+    cooldown_seconds: float = 0
 
     def validate(self) -> SchedulerConfig:
         if isinstance(self.concurrency, bool) or not isinstance(self.concurrency, int) or not 1 <= self.concurrency <= 4:
@@ -34,6 +35,8 @@ class SchedulerConfig:
             raise ValidationError("scheduler max_seconds must be between 0 and 3600")
         if isinstance(self.max_attempts, bool) or not isinstance(self.max_attempts, int) or not 1 <= self.max_attempts <= 5:
             raise ValidationError("scheduler max_attempts must be between 1 and 5")
+        if isinstance(self.cooldown_seconds, bool) or not isinstance(self.cooldown_seconds, (int, float)) or self.cooldown_seconds < 0 or self.cooldown_seconds > 86400:
+            raise ValidationError("scheduler cooldown_seconds must be between 0 and 86400")
         return self
 
 
@@ -194,6 +197,17 @@ class Scheduler:
     def control_status(self) -> dict[str, Any]:
         return self._control()
 
+    def _cooldown_active(self, task: Task) -> bool:
+        """Report whether a failed task is still inside its retry cooldown."""
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        value = metadata.get("cooldown_until")
+        if not value:
+            return False
+        try:
+            return parse_time(str(value)) > utc_now()
+        except ValueError:
+            return False
+
     def _claim(self, entry: dict[str, Any], run_id: str, config: SchedulerConfig, approval_ids: list[str] | None = None) -> tuple[dict[str, Any] | None, str | None]:
         task_id = str(entry["task_id"])
         now = utc_now()
@@ -204,6 +218,8 @@ class Scheduler:
                 return None, "not_claimable"
             task_record = self.state._row_to_record("tasks", row)
             task = Task.from_dict(task_record)
+            if self._cooldown_active(task):
+                return None, "cooldown"
             if task.status == "failed" and (not config.retry_failed or task.attempts >= config.max_attempts):
                 return None, "retry_limit"
             if task.status == "awaiting_approval" and entry.get("approval_needed") and not approval_ids:
@@ -220,7 +236,7 @@ class Scheduler:
                 if entry.get("mutation") and data.get("mutation") and data.get("project_key") == entry.get("project_key"):
                     return None, "same_repo_conflict"
             claim_id = f"claim-{uuid.uuid4().hex}"
-            claim_data = {"attempt": task.attempts + 1, "project_key": entry.get("project_key"), "scheduler_run_id": run_id, "lease_expires_at": lease, "mutation": bool(entry.get("mutation")), "created_at": isoformat(now)}
+            claim_data = {"attempt": task.attempts + 1, "project_key": entry.get("project_key"), "scheduler_run_id": run_id, "owner": "scheduler", "owner_id": run_id, "lease_expires_at": lease, "mutation": bool(entry.get("mutation")), "created_at": isoformat(now)}
             self.state.put_record(connection, "task_claims", {"id": claim_id, "task_id": task_id, "project_id": task.project, "status": "active", "data": claim_data, "created_at": isoformat(now), "updated_at": isoformat(now)})
             return {"id": claim_id, "task_id": task_id, "data": claim_data}, None
 
@@ -298,6 +314,7 @@ class Scheduler:
         selected: list[dict[str, Any]] = []
         skipped = 0
         same_repo_conflicts = 0
+        cooldown_skipped = 0
         awaiting_approval = 0
         cycle_deadline = time.monotonic() + config.max_seconds
         for entry in entries:
@@ -321,6 +338,8 @@ class Scheduler:
             if claim is None:
                 if reason == "same_repo_conflict":
                     same_repo_conflicts += 1
+                if reason == "cooldown":
+                    cooldown_skipped += 1
                 skipped += 1
                 continue
             if entry.get("status") in {"awaiting_approval", "failed"}:
@@ -350,8 +369,14 @@ class Scheduler:
                     if status in {"failed", "timeout"} and config.retry_failed and retryable:
                         current = self.tasks.get(entry["task_id"])
                         if current.status == "failed" and current.attempts < config.max_attempts:
-                            self.tasks.update(entry["task_id"], {"status": "queued", "metadata": {**(current.metadata or {}), "retry_count": current.attempts + 1}})
+                            metadata = {**(current.metadata or {}), "retry_count": current.attempts + 1}
+                            if config.cooldown_seconds > 0:
+                                metadata["cooldown_until"] = isoformat(utc_now() + timedelta(seconds=config.cooldown_seconds))
+                            self.tasks.update(entry["task_id"], {"status": "queued", "metadata": metadata})
                             retry_queued += 1
+                        elif current.status == "failed" and config.cooldown_seconds > 0:
+                            metadata = {**(current.metadata or {}), "cooldown_until": isoformat(utc_now() + timedelta(seconds=config.cooldown_seconds))}
+                            self.tasks.update(entry["task_id"], {"metadata": metadata})
                     if status == "completed":
                         completed += 1
                     elif status in {"failed", "timeout", "blocked"}:
@@ -367,9 +392,9 @@ class Scheduler:
                 finally:
                     self._release_claim(entry["claim"]["id"], "completed" if any(item.get("task_id") == entry["task_id"] and item.get("status") == "completed" for item in results) else "failed")
         status = "completed" if not self._control().get("stop") else "stopped"
-        data = {"items": results, "skipped": skipped, "awaiting_approval": awaiting_approval, "retry_queued": retry_queued, "same_repo_conflicts": same_repo_conflicts}
+        data = {"items": results, "skipped": skipped, "awaiting_approval": awaiting_approval, "retry_queued": retry_queued, "same_repo_conflicts": same_repo_conflicts, "cooldown_skipped": cooldown_skipped}
         self._save_run(run_id, status, started_at, data)
-        return {"run_id": run_id, "status": status, "concurrency": config.concurrency, "max_tasks": config.max_tasks, "max_seconds": config.max_seconds, "selected": len(selected), "completed": completed, "failed": failed, "retry_queued": retry_queued, "skipped": skipped, "awaiting_approval": awaiting_approval, "same_repo_conflicts": same_repo_conflicts, "items": results, "warnings": []}
+        return {"run_id": run_id, "status": status, "concurrency": config.concurrency, "max_tasks": config.max_tasks, "max_seconds": config.max_seconds, "cooldown_seconds": config.cooldown_seconds, "selected": len(selected), "completed": completed, "failed": failed, "retry_queued": retry_queued, "skipped": skipped, "awaiting_approval": awaiting_approval, "same_repo_conflicts": same_repo_conflicts, "cooldown_skipped": cooldown_skipped, "items": results, "warnings": []}
 
     def tick(self, execute: bool = False, approvals: Any = None) -> list[dict[str, Any]]:
         if not execute:

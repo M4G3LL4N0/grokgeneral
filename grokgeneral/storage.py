@@ -257,7 +257,10 @@ class StateStore:
         data = dict(record.get("data") or {})
         for key, value in record.items():
             if key not in _COMMON_COLUMNS and key != "data":
-                data[key] = value
+                # A record read back from the store carries both the nested payload
+                # and its flattened keys. The explicit nested value must win, or an
+                # update to a key that shares a column name is silently discarded.
+                data.setdefault(key, value)
         return redact(data)
 
     def put_record(self, connection: sqlite3.Connection, table: str, record: dict[str, Any]) -> None:

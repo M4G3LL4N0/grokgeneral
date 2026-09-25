@@ -135,6 +135,21 @@ class StorageTests(unittest.TestCase):
                     state.put_record(connection, "projects", {"name": "missing id"})
             state.close()
 
+    def test_nested_data_wins_over_flattened_keys_on_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = StateStore(directory)
+            state.initialize()
+            with state.transaction() as connection:
+                state.put_record(connection, "task_claims", {"id": "claim-1", "task_id": "t1", "status": "active", "data": {"lease_expires_at": "first", "owner": "scheduler"}})
+            record = state.get_record("task_claims", "claim-1")
+            self.assertEqual(record["lease_expires_at"], "first")
+            data = {**record["data"], "lease_expires_at": "second"}
+            with state.transaction() as connection:
+                state.put_record(connection, "task_claims", {**record, "data": data})
+            self.assertEqual(state.get_record("task_claims", "claim-1")["data"]["lease_expires_at"], "second")
+            self.assertEqual(state.get_record("task_claims", "claim-1")["data"]["owner"], "scheduler")
+            state.close()
+
 
 if __name__ == "__main__":
     unittest.main()
