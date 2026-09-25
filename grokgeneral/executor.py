@@ -44,12 +44,12 @@ class Executor:
             raise ValidationError(f"task cannot execute from status {current.status}")
         return current
 
-    def _record_usage(self, task: Task, resource: Any, result: dict[str, Any]) -> None:
-        usage = result.get("usage")
+    def _record_usage(self, task: Task, resource: Any, result: dict[str, Any], execution_id: str | None = None) -> None:
+        usage = result.get("usage") if isinstance(result, dict) else None
         if isinstance(usage, dict) and usage.get("total") is not None:
-            self.service.usage.record(source="measured", units=usage.get("total"), cost=usage.get("cost"), project=task.project, resource=resource.id if resource else None, task_id=task.id, metadata={"kind": "opencode"})
+            self.service.usage.record(source="reported", units=usage.get("total"), unit="tokens", cost=usage.get("cost"), project=task.project, resource=resource.id if resource else None, task_id=task.id, execution_id=execution_id, provider=resource.provider if resource else None, model=resource.model if resource else None, input_tokens=usage.get("input"), output_tokens=usage.get("output"), total_tokens=usage.get("total"), cost_class=resource.cost_class if resource else None, status="reported", metadata={"kind": "opencode"})
         else:
-            self.service.usage.record(source="unknown", project=task.project, resource=resource.id if resource else None, task_id=task.id, metadata={"kind": "opencode"})
+            self.service.usage.record(source="unknown", project=task.project, resource=resource.id if resource else None, task_id=task.id, execution_id=execution_id, provider=resource.provider if resource else None, model=resource.model if resource else None, status="unknown", metadata={"kind": "opencode"})
 
     @staticmethod
     def _snapshot_changed(before: dict[str, Any], after: dict[str, Any] | None) -> bool:
@@ -137,14 +137,15 @@ class Executor:
         if task.metadata.get("modify") and before["dirty"]:
             raise SafetyBlockedError("project has existing changes; modify execution requires a clean worktree")
         running = self._transition_to_running(task)
-        receipt = self.service.executions.start({"task_id": running.id, "project": project.id, "resource": resource.id, "executor": resource.executor, "provider": resource.provider, "model": model_name, "context": context.content})
+        receipt = self.service.executions.start({"task_id": running.id, "project": project.id, "resource": resource.id, "executor": resource.executor, "provider": resource.provider, "model": model_name, "work_key": task.metadata.get("work_key") if isinstance(task.metadata, dict) else None, "context": context.content})
         try:
             adapter_result = self.service.adapters.run("opencode", prompt, cwd=project.path, model=model_name, timeout=timeout, allow_execution=True)
         except Exception as exc:
+            self._record_usage(running, resource, {"usage": None}, receipt["id"])
             after = RepositorySnapshot.capture(project.path)
             receipt, failed = self._fail_execution(running, receipt["id"], str(exc), before=before, after=after)
             return {"task": failed, "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": {"before": before, "after": after, "changed": self._snapshot_changed(before, after)}, "adapter": {"status": "failed", "error": str(exc), "events": []}}
-        self._record_usage(running, resource, adapter_result)
+        self._record_usage(running, resource, adapter_result, receipt["id"])
         after = RepositorySnapshot.capture(project.path)
         snapshot = {"before": before, "after": after, "changed": self._snapshot_changed(before, after)}
         if snapshot["changed"] and not task.metadata.get("modify"):

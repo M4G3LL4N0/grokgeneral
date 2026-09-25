@@ -76,6 +76,20 @@ class UsageLedgerTests(unittest.TestCase):
         self.assertEqual(summary["known_units"], 0.0)
         self.assertEqual(summary["known_cost"], 0.0)
 
+    def test_usage_groups_units_without_mixing_tokens_and_seconds(self):
+        self.ledger.record(source="reported", units=10, unit="tokens", resource="space", provider="opencode", model="opencode/space-bunny-free")
+        self.ledger.record(source="measured", units=2, unit="seconds", resource="local")
+        summary = self.ledger.summary()
+        self.assertEqual(summary["by_unit"]["tokens"]["units"], 10)
+        self.assertEqual(summary["by_unit"]["seconds"]["units"], 2)
+        self.assertEqual(summary["by_resource"]["space"]["count"], 1)
+
+    def test_execution_usage_is_idempotent(self):
+        first = self.ledger.record(source="reported", execution_id="exec-1", unit="tokens", units=4, resource="space", provider="opencode")
+        second = self.ledger.record(source="reported", execution_id="exec-1", unit="tokens", units=4, resource="space", provider="opencode")
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(len(self.ledger.list()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

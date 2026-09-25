@@ -20,6 +20,7 @@ from .opportunity_v2 import OpportunityEngineV2
 from .policies import PolicyEngine
 from .projects import ProjectRegistry, RootRegistry
 from .resources import ResourceRegistry
+from .results import compact_result
 from .router import Router
 from .scheduler import Scheduler, SchedulerConfig
 from .storage import StateStore, atomic_write_json
@@ -185,6 +186,12 @@ class GrokGeneral:
 
     def execution_show(self, execution_id: str) -> dict[str, Any]:
         return self.executions.get(execution_id)
+
+    def compact_result(self, execution_id: str) -> dict[str, Any]:
+        receipt = self.executions.get(execution_id)
+        task = self.tasks.get(receipt["task_id"]) if receipt.get("task_id") else None
+        snapshot = receipt.get("snapshot") if isinstance(receipt.get("snapshot"), dict) else {}
+        return compact_result(receipt, snapshot.get("before"), snapshot.get("after"), task)
 
     def schedule(self, execute: bool = False, approvals: Any = None) -> list[dict[str, Any]]:
         return self.scheduler.tick(execute=execute, approvals=approvals)

@@ -168,6 +168,11 @@ class TaskRegistry:
         actions = self.classify_command_actions(command)
         return actions[0] if actions else None
 
+    def _record_usage(self, task: Task, duration: float, status: str) -> None:
+        if self.usage is None:
+            return
+        self.usage.record(source="measured", units=duration, unit="seconds", duration_seconds=duration, project=task.project, task_id=task.id, status=status, idempotency_key=f"task:{task.id}:attempt:{task.attempts}", metadata={"kind": "local_process", "status": status})
+
     def run(self, task_id: str, approvals: Any = None, project_path: str | None = None) -> Task:
         task = self.get(task_id)
         if not self._dependencies_ready(task):
@@ -203,15 +208,16 @@ class TaskRegistry:
         try:
             result = subprocess.run(command, cwd=cwd, env=environment, capture_output=True, text=True, timeout=120, check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
+            self._record_usage(running, time.perf_counter() - started, "failed")
             return self.fail(task.id, str(exc), increment_attempt=False)
         output = {"stdout": redact(result.stdout), "stderr": redact(result.stderr), "returncode": result.returncode, "command": command}
         if result.returncode != 0:
+            self._record_usage(running, time.perf_counter() - started, "failed")
             failed = self.fail(task.id, f"command exited with {result.returncode}", increment_attempt=False)
             failed.metadata["output"] = output
             return self._save(Task.from_dict(failed.to_dict()), "task.failed", "TASK_FAILED")
         completed = self.complete(task.id, [output])
-        if self.usage is not None:
-            self.usage.record(source="measured", units=time.perf_counter() - started, cost=None, project=completed.project, task_id=completed.id, metadata={"kind": "local_process", "returncode": 0})
+        self._record_usage(running, time.perf_counter() - started, "completed")
         return completed
 
     def complete(self, task_id: str, outputs: list[Any] | None = None) -> Task:

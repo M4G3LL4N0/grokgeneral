@@ -320,6 +320,15 @@ def _build_parser() -> argparse.ArgumentParser:
     usage.add_argument("--cost", type=float)
     usage.add_argument("--task-id")
     usage.add_argument("--metadata")
+    usage.add_argument("--unit", choices=["tokens", "credits", "seconds", "unknown"])
+    usage.add_argument("--execution-id")
+    usage.add_argument("--provider")
+    usage.add_argument("--model")
+    usage.add_argument("--duration", type=float)
+    usage.add_argument("--input-tokens", type=float)
+    usage.add_argument("--output-tokens", type=float)
+    usage.add_argument("--total-tokens", type=float)
+    usage.add_argument("--cost-class")
     usage.add_argument("--records", action="store_true")
 
     executor = commands.add_parser("executor")
@@ -345,6 +354,8 @@ def _build_parser() -> argparse.ArgumentParser:
     execution_sub = execution.add_subparsers(dest="action", required=True)
     execution_show = execution_sub.add_parser("show")
     execution_show.add_argument("id")
+    execution_result = execution_sub.add_parser("result")
+    execution_result.add_argument("id")
     task_executions = task_sub.add_parser("executions")
     task_executions.add_argument("id")
 
@@ -636,7 +647,7 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
             return event
         if command == "usage":
             if args.record:
-                return service.usage.record(args.source or "unknown", units=args.units, cost=args.cost, project=args.project, resource=args.resource, task_id=args.task_id, metadata=_parse_json(args.metadata, "--metadata") or {})
+                return service.usage.record(args.source or "unknown", units=args.units, cost=args.cost, project=args.project, resource=args.resource, task_id=args.task_id, metadata=_parse_json(args.metadata, "--metadata") or {}, execution_id=args.execution_id, provider=args.provider, model=args.model, unit=args.unit, duration_seconds=args.duration, input_tokens=args.input_tokens, output_tokens=args.output_tokens, total_tokens=args.total_tokens, cost_class=args.cost_class)
             if args.records:
                 return service.usage.list(args.project, args.resource, args.task_id)
             return service.usage.summary(args.project, args.resource, args.task_id)
@@ -646,7 +657,7 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
         if command == "executions":
             return service.executions_list(task_id=args.task, project=args.project)
         if command == "execution":
-            return service.execution_show(args.id)
+            return service.compact_result(args.id) if args.action == "result" else service.execution_show(args.id)
         if command == "context":
             return service.context(args.task_id)
         if command == "schedule":
