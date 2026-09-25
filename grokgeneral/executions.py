@@ -61,6 +61,7 @@ class ExecutionRegistry:
                 "validation": {"status": "pending"},
                 "usage": None,
                 "error": None,
+                "snapshot": data.get("snapshot"),
                 "raw_log_path": None,
             },
             "created_at": now,
@@ -100,6 +101,7 @@ class ExecutionRegistry:
             "artifacts": redact(result.get("artifacts", [])),
             "validation": redact(result.get("validation") or {"status": "pending"}),
             "usage": redact(result.get("usage")),
+            "snapshot": redact(result.get("snapshot") or data.get("snapshot")),
             "error": redact(result.get("error")),
             "raw_log_path": raw_log_path or data.get("raw_log_path"),
         })

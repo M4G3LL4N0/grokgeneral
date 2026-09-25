@@ -71,13 +71,15 @@ class Router:
         values.setdefault("local", Resource(id="local", name="local", provider="local", executor="local", model="shell", cost_class="free", availability="available", health="healthy", capabilities=["coding", "repo-analysis", "refactoring", "testing", "local-shell", "read", "build"]))
         return list(values.values())
 
-    def _cache_key(self, task: Task, project: Project | None, resources: list[Resource]) -> str | None:
+    def _cache_key(self, task: Task, project: Project | None, resources: list[Resource], approvals: Any = None) -> str | None:
         if self.cache is None:
             return None
+        supplied = sorted({str(item).strip().lower() for item in (approvals or []) if str(item).strip()}) if not isinstance(approvals, str) else [approvals.strip().lower()]
         payload = {
             "task": task.to_dict(),
             "project": project.to_dict() if project else None,
             "policy": self.policies.load(),
+            "approvals": supplied,
             "resources": [{"id": item.id, "availability": item.availability, "expires_at": item.expires_at, "health": item.health, "remaining_capacity": item.remaining_capacity, "cost_class": item.cost_class, "capabilities": sorted(item.capabilities)} for item in sorted(resources, key=lambda item: item.id)],
         }
         return self.cache.key("route", payload)
@@ -113,7 +115,7 @@ class Router:
         if not normalized_task.required_capabilities:
             normalized_task.required_capabilities = _inferred_capabilities(normalized_task)
         all_resources = self._all_resources()
-        key = self._cache_key(normalized_task, normalized_project, all_resources)
+        key = self._cache_key(normalized_task, normalized_project, all_resources, approvals)
         cached = self._cached(key)
         if cached is not None:
             self._audit(normalized_task, cached)

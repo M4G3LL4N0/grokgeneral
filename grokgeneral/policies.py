@@ -61,7 +61,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "read": {"allowed": True, "requires_approval": False},
         "inspect": {"allowed": True, "requires_approval": False},
         "analyze": {"allowed": True, "requires_approval": False},
-        "validate": {"allowed": True, "requires_approval": False},
+        "validate": {"allowed": True, "requires_approval": True, "approval": "validate"},
         "modify": {"allowed": True, "requires_approval": True, "approval": "modify"},
         "commit": {"allowed": True, "requires_approval": True, "approval": "commit"},
         "deploy": {"allowed": True, "requires_approval": True, "approval": "deploy"},

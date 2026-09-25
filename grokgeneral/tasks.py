@@ -18,13 +18,14 @@ from .storage import StateStore, redact
 from .timeutil import isoformat, utc_now
 from .usage import UsageLedger
 
-_STATUSES = {"proposed", "queued", "routed", "running", "validating", "completed", "failed", "blocked", "cancelled"}
+_STATUSES = {"proposed", "queued", "routed", "running", "validating", "awaiting_approval", "completed", "failed", "blocked", "cancelled"}
 _TRANSITIONS = {
-    "proposed": {"queued", "routed", "running", "blocked", "cancelled"},
-    "queued": {"routed", "running", "blocked", "cancelled", "failed"},
-    "routed": {"running", "blocked", "cancelled", "failed"},
+    "proposed": {"queued", "routed", "running", "awaiting_approval", "blocked", "cancelled"},
+    "queued": {"routed", "running", "awaiting_approval", "blocked", "cancelled", "failed"},
+    "routed": {"running", "awaiting_approval", "blocked", "cancelled", "failed"},
     "running": {"validating", "completed", "failed", "blocked", "cancelled"},
     "validating": {"completed", "failed", "blocked", "cancelled"},
+    "awaiting_approval": {"queued", "routed", "failed", "cancelled"},
     "blocked": {"queued", "cancelled"},
     "failed": {"queued", "cancelled"},
     "completed": set(),
@@ -145,17 +146,27 @@ class TaskRegistry:
             rerouted.append(updated)
         return rerouted
 
-    def _approval_for_command(self, command: list[str]) -> str | None:
+    @staticmethod
+    def classify_command_actions(command: list[str]) -> list[str]:
         text = " ".join(command).lower()
+        actions: set[str] = set()
         if any(token in text for token in ("git push", "push ")):
-            return "push"
+            actions.add("push")
+        if any(token in text for token in ("git commit", "commit -m", "commit ")):
+            actions.add("commit")
         if any(token in text for token in ("curl", "wget", "git fetch", "git pull", "git clone", "ssh ", "scp ", "npm publish", "pip install", "docker pull", "gh ", "http://", "https://")):
-            return "network"
+            actions.update({"network", "external"})
         if any(token in text for token in ("rm ", "rmdir", "unlink", "reset --hard", "delete ", "mv ", "cp ", "touch ", "mkdir ", "tee ")) or re.search(r"\b(?:rmtree|unlink|remove|rm)\s*\(", text) or re.search(r"open\s*\([^\n]*['\"](?:w|a|x)", text):
-            return "destructive"
+            actions.add("destructive")
         if any(token in text for token in ("stripe", "purchase", "payment", "pay ")):
-            return "spend"
-        return None
+            actions.add("spend")
+        if any(token in text for token in ("deploy", "terraform apply", "kubectl apply", "docker push")):
+            actions.add("deploy")
+        return sorted(actions)
+
+    def _approval_for_command(self, command: list[str]) -> str | None:
+        actions = self.classify_command_actions(command)
+        return actions[0] if actions else None
 
     def run(self, task_id: str, approvals: Any = None, project_path: str | None = None) -> Task:
         task = self.get(task_id)
@@ -169,9 +180,10 @@ class TaskRegistry:
         if isinstance(command, str) or not isinstance(command, (list, tuple)) or not command or not all(isinstance(item, str) and item for item in command):
             raise ValidationError("task command must be a non-empty list of strings")
         command = list(command)
-        approval = self._approval_for_command(command)
+        actions = self.classify_command_actions(command)
+        ordered_actions = [action for action in ("network", "push", "commit", "deploy", "spend", "destructive", "external") if action in actions]
         supplied = set(approvals or [])
-        if approval:
+        for approval in ordered_actions:
             decision = self.policies.authorize(approval, supplied, self.policies.load())
             if not decision.allowed:
                 raise SafetyBlockedError(f"task command requires {approval} approval: {'; '.join(decision.reasons)}")
@@ -214,7 +226,7 @@ class TaskRegistry:
 
     def fail(self, task_id: str, error: str, increment_attempt: bool = True) -> Task:
         task = self.get(task_id)
-        if task.status not in {"running", "validating", "routed", "queued", "proposed"}:
+        if task.status not in {"running", "validating", "routed", "queued", "proposed", "awaiting_approval"}:
             raise ValidationError(f"task cannot fail from status {task.status}")
         values = task.to_dict()
         values["status"] = "failed"

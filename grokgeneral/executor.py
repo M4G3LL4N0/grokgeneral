@@ -51,12 +51,33 @@ class Executor:
         else:
             self.service.usage.record(source="unknown", project=task.project, resource=resource.id if resource else None, task_id=task.id, metadata={"kind": "opencode"})
 
+    @staticmethod
+    def _snapshot_changed(before: dict[str, Any], after: dict[str, Any] | None) -> bool:
+        if after is None:
+            return False
+        return before.get("head") != after.get("head") or before.get("changes") != after.get("changes")
+
+    def _fail_execution(self, task: Task, receipt_id: str, error: str, adapter_result: dict[str, Any] | None = None, before: dict[str, Any] | None = None, after: dict[str, Any] | None = None, status: str = "failed") -> tuple[dict[str, Any], dict[str, Any]]:
+        adapter_result = adapter_result or {}
+        snapshot = {"before": before, "after": after, "changed": self._snapshot_changed(before or {}, after)}
+        receipt = self.service.executions.complete(receipt_id, {
+            "status": status,
+            "exit_code": adapter_result.get("exit_code"),
+            "summary": adapter_result.get("summary", ""),
+            "error": error,
+            "raw_events": adapter_result.get("events", []),
+            "usage": adapter_result.get("usage"),
+            "snapshot": snapshot,
+        })
+        failed = self.service.tasks.fail(task.id, error, increment_attempt=False)
+        return receipt, failed.to_dict()
+
     def run(self, task_id: str, dry_run: bool = False, approvals: Any = None, allow_execution: bool = False, model: str | None = None, timeout: int = 120) -> dict[str, Any]:
         task = self.service.tasks.get(task_id)
         if not all(self.service.tasks.get(dependency).status == "completed" for dependency in task.dependencies):
             raise ValidationError("task dependencies are not complete")
         project = self._project(task)
-        decision = self.service.router.route(task, project=project)
+        decision = self.service.router.route(task, project=project, approvals=approvals)
         resource = self._resource(decision.to_dict())
         if resource.provider != "opencode":
             raise ProviderUnavailableError("selected resource is not an OpenCode execution path")
@@ -65,33 +86,61 @@ class Executor:
         model_name = model or resource.model
         if not isinstance(model_name, str) or "/" not in model_name:
             raise ValidationError("OpenCode resource has no provider/model identifier")
-        self.permissions.require("inspect", approvals)
+        try:
+            self.permissions.require("inspect", approvals)
+        except SafetyBlockedError:
+            self.service.events.emit("POLICY_BLOCKED", {"task_id": task.id, "action": "inspect"})
+            raise
         context = self.service.context_builder.build(task, project=project, write=not dry_run)
         prompt = json.dumps({"task": task.to_dict(), "context": context.content}, sort_keys=True, ensure_ascii=False)
         prompt = prompt[-16000:]
         if dry_run:
             adapter_result = self.service.adapters.run("opencode", prompt, cwd=project.path, model=model_name, timeout=timeout, dry_run=True)
             return {"dry_run": True, "task": task.to_dict(), "route": decision.to_dict(), "context": context.to_dict(), "adapter": adapter_result, "validation_commands": self.service.project_validation(project.id)}
-        self.permissions.require("modify", approvals) if task.metadata.get("modify") else None
-        snapshot = RepositorySnapshot.capture(project.path)
-        if task.metadata.get("modify") and snapshot["dirty"]:
-            raise SafetyBlockedError("project has existing changes; modify execution requires a clean worktree")
+        if task.metadata.get("modify"):
+            try:
+                self.permissions.require("modify", approvals)
+            except SafetyBlockedError:
+                self.service.events.emit("POLICY_BLOCKED", {"task_id": task.id, "action": "modify"})
+                raise
+        commands = self.service.project_validation(project.id)
+        if commands:
+            try:
+                self.permissions.require("validate", approvals)
+            except SafetyBlockedError:
+                self.service.events.emit("POLICY_BLOCKED", {"task_id": task.id, "action": "validate"})
+                raise
         if not allow_execution:
             raise SafetyBlockedError("OpenCode execution requires explicit execution approval")
+        before = RepositorySnapshot.capture(project.path)
+        if task.metadata.get("modify") and before["dirty"]:
+            raise SafetyBlockedError("project has existing changes; modify execution requires a clean worktree")
         running = self._transition_to_running(task)
         receipt = self.service.executions.start({"task_id": running.id, "project": project.id, "resource": resource.id, "executor": resource.executor, "provider": resource.provider, "model": model_name, "context": context.content})
-        adapter_result = self.service.adapters.run("opencode", prompt, cwd=project.path, model=model_name, timeout=timeout, allow_execution=True)
+        try:
+            adapter_result = self.service.adapters.run("opencode", prompt, cwd=project.path, model=model_name, timeout=timeout, allow_execution=True)
+        except Exception as exc:
+            after = RepositorySnapshot.capture(project.path)
+            receipt, failed = self._fail_execution(running, receipt["id"], str(exc), before=before, after=after)
+            return {"task": failed, "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": {"before": before, "after": after, "changed": self._snapshot_changed(before, after)}, "adapter": {"status": "failed", "error": str(exc), "events": []}}
         self._record_usage(running, resource, adapter_result)
+        after = RepositorySnapshot.capture(project.path)
+        snapshot = {"before": before, "after": after, "changed": self._snapshot_changed(before, after)}
+        if snapshot["changed"] and not task.metadata.get("modify"):
+            receipt, failed = self._fail_execution(running, receipt["id"], "provider changed the repository without modify approval", adapter_result, before, after)
+            return {"task": failed, "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": snapshot, "adapter": adapter_result}
         if adapter_result.get("status") != "completed":
-            receipt = self.service.executions.complete(receipt["id"], {"status": "failed", "exit_code": adapter_result.get("exit_code"), "summary": adapter_result.get("summary", ""), "error": adapter_result.get("error") or "OpenCode execution failed", "raw_events": adapter_result.get("events", []), "usage": adapter_result.get("usage")})
-            failed = self.service.tasks.fail(running.id, receipt.get("error") or "OpenCode execution failed", increment_attempt=False)
-            return {"task": failed.to_dict(), "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": snapshot, "adapter": adapter_result}
+            receipt, failed = self._fail_execution(running, receipt["id"], adapter_result.get("error") or "OpenCode execution failed", adapter_result, before, after)
+            return {"task": failed, "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": snapshot, "adapter": adapter_result}
         validating = self.service.tasks.update(running.id, {"status": "validating"})
         self.service.events.emit("TASK_VALIDATING", {"task_id": validating.id, "execution_id": receipt["id"]})
-        commands = self.service.project_validation(project.id)
-        validation_result = self.validation.run(project.path, commands, approvals=set(approvals or set()) | {"validate"}, timeout=timeout) if commands else {"status": "pending", "changed": False, "exit_code": None, "commands": []}
+        try:
+            validation_result = self.validation.run(project.path, commands, approvals=approvals, timeout=timeout) if commands else {"status": "pending", "changed": False, "exit_code": None, "commands": []}
+        except Exception as exc:
+            receipt, failed = self._fail_execution(validating, receipt["id"], f"validation failed: {exc}", adapter_result, before, RepositorySnapshot.capture(project.path))
+            return {"task": failed, "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": snapshot, "adapter": adapter_result}
         final_status = "completed" if validation_result.get("status") == "passed" and not validation_result.get("changed") else "failed"
-        receipt = self.service.executions.complete(receipt["id"], {"status": final_status, "exit_code": adapter_result.get("exit_code"), "summary": adapter_result.get("summary", ""), "validation": validation_result, "raw_events": adapter_result.get("events", []), "usage": adapter_result.get("usage"), "error": None if final_status == "completed" else "validation did not pass"})
+        receipt = self.service.executions.complete(receipt["id"], {"status": final_status, "exit_code": adapter_result.get("exit_code"), "summary": adapter_result.get("summary", ""), "validation": validation_result, "raw_events": adapter_result.get("events", []), "usage": adapter_result.get("usage"), "snapshot": snapshot, "error": None if final_status == "completed" else "validation did not pass"})
         if final_status == "completed":
             completed = self.service.tasks.complete(validating.id, [{"execution_id": receipt["id"], "summary": adapter_result.get("summary", "")}])
         else:

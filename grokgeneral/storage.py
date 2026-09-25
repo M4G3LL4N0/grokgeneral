@@ -16,7 +16,7 @@ _SECRET_KEY = re.compile(r"(?:^|_)(?:api[_-]?key|access[_-]?token|refresh[_-]?to
 _SECRET_ASSIGNMENT = re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|secret|password|authorization|cookie)\s*([:=])\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)")
 _TABLES = {
     "projects", "roots", "resources", "tasks", "policies", "events", "subscriptions",
-    "usage", "cache_entries", "opportunities", "executions", "audit_log",
+    "usage", "cache_entries", "opportunities", "executions", "approvals", "scheduler_runs", "task_claims", "audit_log",
 }
 _COMMON_COLUMNS = {
     "id", "name", "path", "repository", "status", "priority", "project_id",
@@ -177,6 +177,18 @@ class StateStore:
                     started_at TEXT, ended_at TEXT, exit_code INTEGER, data TEXT NOT NULL,
                     created_at TEXT, updated_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS approvals (
+                    id TEXT PRIMARY KEY, task_id TEXT, status TEXT,
+                    data TEXT NOT NULL, created_at TEXT, updated_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS scheduler_runs (
+                    id TEXT PRIMARY KEY, status TEXT, started_at TEXT, ended_at TEXT,
+                    data TEXT NOT NULL, created_at TEXT, updated_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS task_claims (
+                    id TEXT PRIMARY KEY, task_id TEXT, project_id TEXT, status TEXT,
+                    data TEXT NOT NULL, created_at TEXT, updated_at TEXT
+                );
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, entity_type TEXT,
                     entity_id TEXT, data TEXT NOT NULL, created_at TEXT
@@ -188,7 +200,11 @@ class StateStore:
                 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
                 CREATE INDEX IF NOT EXISTS idx_usage_resource ON usage(resource_id);
                 CREATE INDEX IF NOT EXISTS idx_executions_task ON executions(task_id);
-                CREATE INDEX IF NOT EXISTS idx_executions_project ON executions(project_id);
+                 CREATE INDEX IF NOT EXISTS idx_executions_project ON executions(project_id);
+                 CREATE INDEX IF NOT EXISTS idx_approvals_task ON approvals(task_id);
+                 CREATE INDEX IF NOT EXISTS idx_task_claims_task ON task_claims(task_id);
+                 CREATE INDEX IF NOT EXISTS idx_task_claims_status ON task_claims(status);
+
                 """
             )
             connection.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '1')")
@@ -257,6 +273,7 @@ class StateStore:
             "provider": record.get("provider"),
             "model": record.get("model"),
             "ended_at": record.get("ended_at"),
+            "started_at": record.get("started_at"),
             "exit_code": record.get("exit_code"),
             "kind": record.get("kind"),
             "event_type": record.get("event_type") or record.get("type"),
@@ -267,6 +284,23 @@ class StateStore:
             "created_at": record.get("created_at") or now,
             "updated_at": record.get("updated_at") or now,
             "score": record.get("score"),
+            "attempt": record.get("attempt"),
+            "project_key": record.get("project_key"),
+            "scheduler_run_id": record.get("scheduler_run_id"),
+            "lease_expires_at": record.get("lease_expires_at"),
+            "mutation": record.get("mutation"),
+            "completed_at": record.get("completed_at"),
+            "actor": record.get("actor"),
+            "required_actions": record.get("required_actions"),
+            "payload_hash": record.get("payload_hash"),
+            "work_key": record.get("work_key"),
+            "duration_seconds": record.get("duration_seconds"),
+            "unit": record.get("unit"),
+            "status_reason": record.get("status_reason"),
+            "selection": record.get("selection"),
+            "completed_count": record.get("completed_count"),
+            "failed_count": record.get("failed_count"),
+            "skipped_count": record.get("skipped_count"),
             "data": data,
         }
         if table == "projects":
@@ -282,6 +316,12 @@ class StateStore:
             columns = ["id", "resource_id", "task_id", "score", "data", "created_at", "updated_at"]
         elif table == "executions":
             columns = ["id", "task_id", "project_id", "resource_id", "executor", "provider", "model", "status", "started_at", "ended_at", "exit_code", "data", "created_at", "updated_at"]
+        elif table == "approvals":
+            columns = ["id", "task_id", "status", "data", "created_at", "updated_at"]
+        elif table == "scheduler_runs":
+            columns = ["id", "status", "started_at", "ended_at", "data", "created_at", "updated_at"]
+        elif table == "task_claims":
+            columns = ["id", "task_id", "project_id", "status", "data", "created_at", "updated_at"]
         elif table == "cache_entries":
             values["key"] = record_id
             values["value"] = data

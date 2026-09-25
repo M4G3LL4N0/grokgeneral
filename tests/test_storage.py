@@ -117,7 +117,16 @@ class StorageTests(unittest.TestCase):
             self.assertEqual({row["id"] for row in rows}, {f"p-{i}" for i in range(8)})
             state.close()
 
-    def test_invalid_record_is_rejected(self):
+    def test_part2_control_tables_persist_generic_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = StateStore(directory)
+            state.initialize()
+            for table in ("approvals", "scheduler_runs", "task_claims"):
+                with state.transaction() as connection:
+                    state.put_record(connection, table, {"id": f"{table}-1", "status": "pending", "data": {"table": table}})
+                self.assertEqual(state.get_record(table, f"{table}-1")["data"]["table"], table)
+            state.close()
+
         with tempfile.TemporaryDirectory() as directory:
             state = StateStore(directory)
             state.initialize()

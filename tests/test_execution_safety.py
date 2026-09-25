@@ -58,7 +58,8 @@ class ExecutionSafetyTests(unittest.TestCase):
     def test_permissions_are_separate(self):
         permission = PermissionPolicy(self.policies)
         self.assertTrue(permission.authorize("inspect", set()).allowed)
-        self.assertTrue(permission.authorize("validate", set()).allowed)
+        self.assertFalse(permission.authorize("validate", set()).allowed)
+        self.assertTrue(permission.authorize("validate", {"validate"}).allowed)
         self.assertFalse(permission.authorize("modify", set()).allowed)
         self.assertFalse(permission.authorize("push", set()).allowed)
         self.assertTrue(permission.authorize("push", {"push"}).allowed)

@@ -70,11 +70,22 @@ class TaskRegistryTests(unittest.TestCase):
 
     def test_fail_increments_attempts_and_records_error(self):
         task = self.tasks.add({"goal": "fail"})
-        self.tasks.update(task.id, {"status": "running"})
+        task = self.tasks.update(task.id, {"status": "running"})
         task = self.tasks.fail(task.id, "broken")
         self.assertEqual(task.status, "failed")
         self.assertEqual(task.attempts, 1)
         self.assertIn("broken", task.metadata["error"])
+
+    def test_command_action_classification_returns_all_applicable_actions(self):
+        actions = self.tasks.classify_command_actions(["curl", "https://example.test", "&&", "git", "push"])
+        self.assertEqual(actions, ["external", "network", "push"])
+
+    def test_awaiting_approval_is_a_valid_lifecycle_state(self):
+        task = self.tasks.add({"goal": "needs approval"})
+        task = self.tasks.update(task.id, {"status": "queued"})
+        task = self.tasks.update(task.id, {"status": "awaiting_approval"})
+        self.assertEqual(task.status, "awaiting_approval")
+
 
 
 if __name__ == "__main__":
