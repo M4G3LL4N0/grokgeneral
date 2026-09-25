@@ -162,9 +162,15 @@ class Executor:
             receipt, failed = self._fail_execution(validating, receipt["id"], f"validation failed: {exc}", adapter_result, before, RepositorySnapshot.capture(project.path))
             return {"task": failed, "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": snapshot, "adapter": adapter_result}
         final_status = "completed" if validation_result.get("status") == "passed" and not validation_result.get("changed") else "failed"
-        receipt = self.service.executions.complete(receipt["id"], {"status": final_status, "exit_code": adapter_result.get("exit_code"), "summary": adapter_result.get("summary", ""), "validation": validation_result, "raw_events": adapter_result.get("events", []), "usage": adapter_result.get("usage"), "snapshot": snapshot, "error": None if final_status == "completed" else "validation did not pass"})
+        if validation_result.get("status") == "pending":
+            failure_reason = "validation is not configured for this project"
+        elif validation_result.get("changed"):
+            failure_reason = "execution changed the repository without modify approval"
+        else:
+            failure_reason = "validation did not pass"
+        receipt = self.service.executions.complete(receipt["id"], {"status": final_status, "exit_code": adapter_result.get("exit_code"), "summary": adapter_result.get("summary", ""), "validation": validation_result, "raw_events": adapter_result.get("events", []), "usage": adapter_result.get("usage"), "snapshot": snapshot, "error": None if final_status == "completed" else failure_reason})
         if final_status == "completed":
             completed = self.service.tasks.complete(validating.id, [{"execution_id": receipt["id"], "summary": adapter_result.get("summary", "")}])
         else:
-            completed = self.service.tasks.fail(validating.id, "validation did not pass", increment_attempt=False)
+            completed = self.service.tasks.fail(validating.id, failure_reason, increment_attempt=False)
         return {"task": completed.to_dict(), "receipt": receipt, "route": decision.to_dict(), "context": context.to_dict(), "snapshot": snapshot, "adapter": adapter_result, "validation": validation_result}

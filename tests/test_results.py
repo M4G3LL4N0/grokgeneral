@@ -95,3 +95,15 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(result["files_deleted_by_execution"], [])
         self.assertIn("new.py", result["files_changed_by_execution"])
         self.assertEqual(result["files_changed"], 1)
+
+    def test_completed_execution_without_configured_validation_is_success(self):
+        receipt = {"id": "execution-9", "task_id": "task-9", "project_id": "concierge", "provider": "opencode", "model": "opencode/space-bunny-free", "executor": "Space Bunny", "status": "completed", "summary": "reviewed", "validation": {"status": "pending", "changed": False, "exit_code": None, "commands": []}}
+        result = compact_result(receipt, {"changes": []}, {"changes": []})
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["tests"], "not-run")
+        self.assertIsNone(result["next_action"])
+
+    def test_completed_execution_with_unexpected_validation_state_is_not_success(self):
+        receipt = {"id": "execution-10", "project_id": "concierge", "provider": "opencode", "model": "opencode/space-bunny-free", "executor": "Space Bunny", "status": "completed", "summary": "x", "validation": {"status": "weird"}}
+        result = compact_result(receipt, {"changes": []}, {"changes": []})
+        self.assertEqual(result["status"], "failed")

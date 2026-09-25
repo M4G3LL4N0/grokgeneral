@@ -92,7 +92,10 @@ def _test_result(validation: Any) -> str:
     if isinstance(explicit, str) and explicit.strip():
         return explicit.strip()[:128]
     status = str(validation.get("status") or "unknown")
-    return {"passed": "passed", "failed": "failed", "timeout": "timeout", "blocked": "blocked"}.get(status, status[:128])
+    # "pending" is what the executor records when no validation command is
+    # configured. That is an unrun check, not a failure.
+    mapped = {"passed": "passed", "failed": "failed", "timeout": "timeout", "blocked": "blocked", "pending": "not-run"}.get(status)
+    return mapped if mapped is not None else status[:128]
 
 
 def compact_result(receipt: dict[str, Any], before_snapshot: dict[str, Any] | None = None, after_snapshot: dict[str, Any] | None = None, task: dict[str, Any] | Any | None = None) -> dict[str, Any]:

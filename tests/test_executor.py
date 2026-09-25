@@ -72,6 +72,19 @@ class ExecutorTests(unittest.TestCase):
         self.assertEqual(result["task"]["status"], "failed")
         self.assertEqual(result["receipt"]["status"], "failed")
         self.assertEqual(result["receipt"]["validation"]["status"], "failed")
+        self.assertIn("did not pass", result["receipt"]["error"])
+
+    def test_missing_validation_configuration_is_reported_distinctly_from_failure(self):
+        record = self.service.projects.get("repo").to_record()
+        metadata = dict((record.get("data") or {}).get("metadata") or {})
+        metadata.pop("validation_commands", None)
+        with self.service.state.transaction() as connection:
+            self.service.state.put_record(connection, "projects", {**record, "data": {**(record.get("data") or {}), "metadata": metadata}})
+        result = self.service.executor_run(self.task.id, allow_execution=True, approvals={"validate"})
+        self.assertEqual(result["receipt"]["status"], "failed")
+        self.assertEqual(result["receipt"]["validation"]["status"], "pending")
+        self.assertIn("not configured", result["receipt"]["error"])
+        self.assertNotIn("did not pass", result["receipt"]["error"])
 
     def test_provider_exception_finishes_receipt_and_task(self):
         self.fake.error = RuntimeError("provider crashed")
