@@ -299,6 +299,21 @@ def _build_parser() -> argparse.ArgumentParser:
     backlog = commands.add_parser("backlog")
     backlog.add_argument("--project")
     adapters = commands.add_parser("adapters")
+    adapter = commands.add_parser("adapter")
+    adapter_sub = adapter.add_subparsers(dest="action", required=True)
+    opencode = adapter_sub.add_parser("opencode")
+    opencode_sub = opencode.add_subparsers(dest="opencode_action", required=True)
+    opencode_sub.add_parser("health")
+    opencode_models = opencode_sub.add_parser("models")
+    opencode_models.add_argument("--provider")
+    opencode_models.add_argument("--refresh", action="store_true")
+    opencode_run = opencode_sub.add_parser("run")
+    opencode_run.add_argument("message")
+    opencode_run.add_argument("--project", required=True)
+    opencode_run.add_argument("--model", required=True)
+    opencode_run.add_argument("--timeout", type=float, default=120)
+    opencode_run.add_argument("--dry-run", action="store_true")
+    opencode_run.add_argument("--allow-execution", action="store_true")
     policy = commands.add_parser("policy")
     policy.add_argument("action", choices=["show", "path"])
     export = commands.add_parser("export")
@@ -556,6 +571,12 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
         if command == "backlog":
             findings = service.backlog.inspect(args.project) if args.project else [item for project in service.projects.list() for item in service.backlog.inspect(project)]
             return {"findings": findings, "proposals": service.backlog.propose(findings)}
+        if command == "adapter":
+            if args.opencode_action == "health":
+                return service.adapters.get("opencode").health()
+            if args.opencode_action == "models":
+                return service.adapters.models("opencode", args.provider, args.refresh)
+            return service.adapters.run("opencode", args.message, cwd=args.project, model=args.model, timeout=args.timeout, dry_run=args.dry_run, allow_execution=args.allow_execution)
         if command == "adapters":
             return service.adapters.health()
         if command == "policy":

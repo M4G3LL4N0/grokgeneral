@@ -177,7 +177,7 @@ class ResourceRegistry:
                 "name": "space-bunny",
                 "provider": "opencode",
                 "executor": "Space Bunny",
-                "model": "Space Bunny",
+                "model": "opencode/space-bunny-free",
                 "cost_class": "free",
                 "marginal_cost": 0,
                 "prepaid": False,
@@ -188,5 +188,5 @@ class ResourceRegistry:
                 "capabilities": ["coding", "repo-analysis", "refactoring", "testing"],
                 "quality_classes": ["capable"],
                 "health": "unknown",
-                "metadata": {"temporary": True, "seeded_by": "grokgeneral"},
+                "metadata": {"temporary": True, "seeded_by": "grokgeneral", "model_verified_at": isoformat(utc_now()), "model_source": "opencode models"},
             })

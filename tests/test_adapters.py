@@ -41,7 +41,7 @@ class AdapterTests(unittest.TestCase):
         health = adapter.health()
         self.assertFalse(health["available"])
         with self.assertRaises(ProviderUnavailableError):
-            adapter.run(["--version"])
+            adapter.run("hello", cwd=self.temp.name, model="opencode/space-bunny-free", allow_execution=True)
 
     def test_registry_health_lists_optional_adapters(self):
         health = self.registry.health()
