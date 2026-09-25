@@ -109,16 +109,17 @@ class Router:
                 cache_hit=True,
             )
 
-    def route(self, task: Task | dict[str, Any], project: Project | dict[str, Any] | None = None, approvals: Any = None) -> RouteDecision:
+    def route(self, task: Task | dict[str, Any], project: Project | dict[str, Any] | None = None, approvals: Any = None, persist: bool = True) -> RouteDecision:
         normalized_task = _as_task(task)
         normalized_project = _as_project(project)
         if not normalized_task.required_capabilities:
             normalized_task.required_capabilities = _inferred_capabilities(normalized_task)
         all_resources = self._all_resources()
-        key = self._cache_key(normalized_task, normalized_project, all_resources, approvals)
+        key = self._cache_key(normalized_task, normalized_project, all_resources, approvals) if persist else None
         cached = self._cached(key)
         if cached is not None:
-            self._audit(normalized_task, cached)
+            if persist:
+                self._audit(normalized_task, cached)
             return cached
         candidates: list[dict[str, Any]] = []
         eligible: list[tuple[float, Resource, PolicyEngine]] = []
@@ -180,7 +181,8 @@ class Router:
                 candidates=[],
                 cache_hit=False,
             )
-            self._audit(normalized_task, decision)
+            if persist:
+                self._audit(normalized_task, decision)
             return decision
         eligible.sort(key=lambda item: (item[0], item[1].id))
         candidates.sort(key=lambda item: (item["score"], item["id"]))
@@ -206,7 +208,8 @@ class Router:
         )
         if key is not None and self.cache is not None:
             self.cache.put(key, decision.to_dict(), "route", metadata={"task_id": normalized_task.id})
-        self._audit(normalized_task, decision)
+        if persist:
+            self._audit(normalized_task, decision)
         return decision
 
     def route_goal(self, goal: str, project: Project | dict[str, Any] | None = None) -> RouteDecision:

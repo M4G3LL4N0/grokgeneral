@@ -16,6 +16,7 @@ from .executions import ExecutionRegistry
 from .executor import Executor
 from .models import Project, Task
 from .opportunities import OpportunityEngine
+from .opportunity_v2 import OpportunityEngineV2
 from .policies import PolicyEngine
 from .projects import ProjectRegistry, RootRegistry
 from .resources import ResourceRegistry
@@ -49,7 +50,7 @@ class GrokGeneral:
         self.executor = Executor(self)
         self.context_builder = ContextBuilder(self.state, self.projects, self.cache)
         self.backlog = BacklogInspector(self.state, self.projects)
-        self.opportunities_engine = OpportunityEngine(self.state, self.projects, self.resources, self.tasks, self.router)
+        self.opportunities_engine = OpportunityEngineV2(self.state, self.projects, self.resources, self.tasks, self.router, self.backlog, self.executions)
         self._doctor = Doctor(self.state, self.projects, self.resources, self.events, self.adapters)
 
     @property
@@ -200,11 +201,11 @@ class GrokGeneral:
         result["approx_bytes"] = pack.approx_bytes
         return result
 
-    def opportunities(self, resource: str | None = None) -> list[dict[str, Any]]:
-        return self.opportunities_engine.list(resource=resource)
+    def opportunities(self, resource: str | None = None, project: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        return self.opportunities_engine.list(projects=project, resource=resource, limit=limit)
 
-    def optimize(self, max_tasks: int = 20, execute: bool = False) -> dict[str, Any]:
-        return self.opportunities_engine.optimize(max_tasks=max_tasks, execute=execute)
+    def optimize(self, max_tasks: int = 4, execute: bool = False, queue: bool | None = None) -> dict[str, Any]:
+        return self.opportunities_engine.optimize(max_tasks=max_tasks, execute=execute, queue=queue)
 
     def status(self) -> dict[str, Any]:
         self.resources.refresh_expirations()

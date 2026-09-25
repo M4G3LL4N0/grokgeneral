@@ -286,9 +286,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     opportunities = commands.add_parser("opportunities")
     opportunities.add_argument("--resource")
+    opportunities.add_argument("--project")
+    opportunities.add_argument("--limit", type=int, default=20)
     optimize = commands.add_parser("optimize")
-    optimize.add_argument("--max-tasks", type=int, default=20)
+    optimize.add_argument("--max-tasks", type=int, default=4)
     optimize.add_argument("--execute", action="store_true")
+    optimize.add_argument("--queue", action="store_true")
 
     events = commands.add_parser("events")
     events.add_argument("--limit", type=int)
@@ -594,9 +597,9 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
                 raise ValidationError("route requires a goal")
             return service.route_goal(args.goal, args.project)
         if command == "opportunities":
-            return service.opportunities(args.resource)
+            return service.opportunities(args.resource, args.project, args.limit)
         if command == "optimize":
-            return service.optimize(args.max_tasks, args.execute)
+            return service.optimize(args.max_tasks, args.execute, args.queue)
         if command == "events":
             return service.events.list(limit=args.limit, event_type=args.event_type)
         if command == "event":

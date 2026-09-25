@@ -56,6 +56,7 @@ class ExecutionRegistry:
             "exit_code": None,
             "data": {
                 "context_hash": data.get("context_hash") or self._context_hash(data.get("context")),
+                "work_key": data.get("work_key"),
                 "summary": "",
                 "artifacts": [],
                 "validation": {"status": "pending"},

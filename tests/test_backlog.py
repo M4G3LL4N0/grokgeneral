@@ -32,6 +32,11 @@ class BacklogTests(unittest.TestCase):
         findings = self.inspector.inspect(self.project)
         self.assertTrue(findings)
         self.assertTrue(any(item["kind"] == "todo" for item in findings))
+        todo = next(item for item in findings if item["kind"] == "todo")
+        self.assertEqual(todo["path"], "src/index.js")
+        self.assertEqual(todo["line"], 1)
+        self.assertEqual(todo["marker"], "TODO")
+        self.assertTrue(todo["fingerprint"])
         self.assertEqual(sorted(item.name for item in self.project_root.iterdir()), before)
 
     def test_proposals_are_data_only(self):
