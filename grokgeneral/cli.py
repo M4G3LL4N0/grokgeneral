@@ -387,6 +387,16 @@ def _build_parser() -> argparse.ArgumentParser:
     schedule.add_argument("--allow-destructive", action="store_true")
     schedule.add_argument("--allow-spend", action="store_true")
     schedule.add_argument("--allow-post", action="store_true")
+    schedule.add_argument("--concurrency", type=int)
+    schedule.add_argument("--max-tasks", type=int)
+    schedule.add_argument("--max-seconds", type=float)
+    schedule.add_argument("--max-attempts", type=int)
+    schedule.add_argument("--retry-failed", action="store_true")
+    schedule.add_argument("--approval-id", action="append")
+    schedule.add_argument("--pause", action="store_true")
+    schedule.add_argument("--resume", action="store_true")
+    schedule.add_argument("--stop", action="store_true")
+    schedule.add_argument("--status", action="store_true")
     commands.add_parser("close")
     return parser
 
@@ -640,8 +650,19 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
         if command == "context":
             return service.context(args.task_id)
         if command == "schedule":
+            if args.pause:
+                return service.scheduler.pause()
+            if args.resume:
+                return service.scheduler.resume()
+            if args.stop:
+                return service.scheduler.stop()
+            if args.status:
+                return service.scheduler.control_status()
             approvals = {name.removeprefix("allow-") for name in ("allow-network", "allow-push", "allow-destructive", "allow-spend", "allow-post") if getattr(args, name, False)}
-            return service.schedule(execute=args.execute, approvals=approvals)
+            from grokgeneral.scheduler import SchedulerConfig
+            values = {key: value for key, value in {"concurrency": args.concurrency, "max_tasks": args.max_tasks, "max_seconds": args.max_seconds, "max_attempts": args.max_attempts, "retry_failed": args.retry_failed}.items() if value is not None}
+            config = SchedulerConfig(**values)
+            return service.schedule_cycle(execute=args.execute, approvals=approvals, approval_ids=args.approval_id, config=config)
         if command == "cache":
             if args.action == "status":
                 return service.cache.status()

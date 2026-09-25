@@ -21,7 +21,7 @@ from .policies import PolicyEngine
 from .projects import ProjectRegistry, RootRegistry
 from .resources import ResourceRegistry
 from .router import Router
-from .scheduler import Scheduler
+from .scheduler import Scheduler, SchedulerConfig
 from .storage import StateStore, atomic_write_json
 from .tasks import TaskRegistry
 from .timeutil import seconds_until
@@ -45,9 +45,9 @@ class GrokGeneral:
         self.executions = ExecutionRegistry(self.state)
         self.router = Router(self.state, self.policies, self.resources, self.cache)
         self.tasks = TaskRegistry(self.state, self.events, self.policies, self.resources, self.router, self.usage)
-        self.scheduler = Scheduler(self.state, self.tasks, self.router)
         self.adapters = AdapterRegistry(self.state, self.policies)
         self.executor = Executor(self)
+        self.scheduler = Scheduler(self.state, self.tasks, self.router, service=self)
         self.context_builder = ContextBuilder(self.state, self.projects, self.cache)
         self.backlog = BacklogInspector(self.state, self.projects)
         self.opportunities_engine = OpportunityEngineV2(self.state, self.projects, self.resources, self.tasks, self.router, self.backlog, self.executions)
@@ -188,6 +188,9 @@ class GrokGeneral:
 
     def schedule(self, execute: bool = False, approvals: Any = None) -> list[dict[str, Any]]:
         return self.scheduler.tick(execute=execute, approvals=approvals)
+
+    def schedule_cycle(self, execute: bool = False, approvals: Any = None, approval_ids: list[str] | None = None, config: SchedulerConfig | None = None) -> dict[str, Any]:
+        return self.scheduler.run_cycle(config=config, approval_ids=approval_ids, execute=execute, approvals=approvals)
 
     def context(self, task_id: str) -> dict[str, Any]:
         task = self.tasks.get(task_id)

@@ -101,11 +101,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, errors)
         self.assertEqual(json.loads(output)["task_id"], task["id"])
 
+    def test_schedule_pause_and_resume_controls_are_available(self):
+        code, output, errors = self.call("schedule", "--pause", "--json")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["state"], "paused")
+        code, output, errors = self.call("schedule", "--resume", "--json")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["state"], "running")
+
     def test_optimize_is_plan_only_without_execute(self):
         code, output, errors = self.call("optimize", "--json")
         self.assertEqual(code, 0, errors)
         value = json.loads(output)
         self.assertFalse(value["executed"])
+        code, output, errors = self.call("schedule", "--stop", "--json")
+        self.assertEqual(code, 0, errors)
+        self.assertTrue(json.loads(output)["stop"])
+        code, output, errors = self.call("schedule", "--resume", "--json")
+        self.assertEqual(code, 0, errors)
 
 
 if __name__ == "__main__":
