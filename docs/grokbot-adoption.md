@@ -56,6 +56,9 @@ Planning and execution remain separate. Do not run broad work across the portfol
 | `autobuilder` | workflow / project fleet tooling | Keep project build state; centralize global backlog, priorities, and execution. |
 | `grokinstall` | skill / capability broker | Keep capability installation and contracts; centralize project/task/execution state. |
 | `gh0st` and startup projects | projects | Registered in GrokGeneral; no duplicate global state. |
+| `opsautopilot` | project / workflow cockpit | Keep product-specific workflow UX; move recurring tasks, queues, and approvals to GrokGeneral. |
+| `opencode-watchdog` | resource / local safety tool | Keep the circuit breaker as an executor-safety adapter; do not create a persistent bot for it. |
+| Autobuilder fleet claims and cooldowns | ephemeral workers / workflow state | Keep per-project build state; migrate global claims, retries, cooldowns, and receipts to GrokGeneral. |
 
 ## Consolidation candidates
 
@@ -64,6 +67,9 @@ Planning and execution remain separate. Do not run broad work across the portfol
 - Keep domain-persistent state in Q-Concierge and GrokBot Society because it is not generic operational state.
 - Keep GrokInstall capabilities as skills; do not turn every capability into a persistent bot.
 - Keep AgentOS as an execution adapter/substrate; do not duplicate the central resource ledger.
+- Keep OpenCode Watchdog as a local circuit breaker, not a persistent bot or scheduler.
+- Keep Autobuilder per-project build/portfolio state, but migrate fleet claims, cooldowns, and execution history.
+- Keep OpsAutopilot's domain cockpit and reports, but submit its recurring work to GrokGeneral.
 
 No existing system is deleted or restructured by this adoption record.
 
