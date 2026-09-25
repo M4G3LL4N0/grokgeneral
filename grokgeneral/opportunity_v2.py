@@ -165,8 +165,9 @@ class OpportunityEngineV2:
                 return resource
         return None
 
-    def _evidence_for_project(self, project: Project) -> list[dict[str, Any]]:
-        values = [self.normalize_evidence(item) for item in self.backlog.inspect(project)]
+    def _evidence_for_project(self, project: Project, findings: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+        raw = self.backlog.inspect(project) if findings is None else findings
+        values = [self.normalize_evidence(item) for item in raw]
         if self.tasks is not None:
             for task in self.tasks.list(project=project.id):
                 if task.status in {"completed", "cancelled", "running", "validating", "blocked"}:
@@ -326,13 +327,14 @@ class OpportunityEngineV2:
             values = [self.projects.get(item) if isinstance(item, str) else item for item in projects]
         return sorted(values, key=lambda item: (-item.priority_score, item.id))
 
-    def list(self, projects: Any = None, resource: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    def list(self, projects: Any = None, resource: str | None = None, limit: int = 20, findings: dict[str, list[dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
             raise ValidationError("limit must be a non-negative integer")
         values: list[dict[str, Any]] = []
         seen: set[str] = set()
         for project in self._projects(projects):
-            for evidence in self._evidence_for_project(project):
+            supplied = findings.get(project.id) if isinstance(findings, dict) else None
+            for evidence in self._evidence_for_project(project, supplied):
                 candidate = self._candidate(project, evidence)
                 if "a validated previous execution completed this work" in candidate.get("blocked_reasons", []):
                     continue

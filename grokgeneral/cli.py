@@ -162,6 +162,7 @@ def _build_parser() -> argparse.ArgumentParser:
     project_scan = project_commands.add_parser("scan")
     project_scan.add_argument("--root")
     project_scan.add_argument("--all", action="store_true")
+    project_scan.add_argument("--no-health", action="store_true", help="discover projects without refreshing health summaries")
     project_commands.add_parser("list")
     project_show = project_commands.add_parser("show")
     project_show.add_argument("name")
@@ -295,6 +296,9 @@ def _build_parser() -> argparse.ArgumentParser:
     opportunities.add_argument("--resource")
     opportunities.add_argument("--project")
     opportunities.add_argument("--limit", type=int, default=20)
+    opportunities_sub = opportunities.add_subparsers(dest="opportunity_action")
+    opportunities_refresh = opportunities_sub.add_parser("refresh", help="explicitly rebuild and persist the opportunity digest")
+    opportunities_refresh.add_argument("--limit", type=int, default=10)
     optimize = commands.add_parser("optimize")
     optimize.add_argument("--max-tasks", type=int, default=4)
     optimize.add_argument("--execute", action="store_true")
@@ -376,6 +380,14 @@ def _build_parser() -> argparse.ArgumentParser:
     ask.add_argument("question")
     backlog = commands.add_parser("backlog")
     backlog.add_argument("--project")
+    backlog.add_argument("--live", action="store_true", help="inspect the filesystem instead of reading persisted summaries")
+    backlog_sub = backlog.add_subparsers(dest="backlog_action")
+    backlog_scan = backlog_sub.add_parser("scan", help="explicitly rescan repositories and persist health summaries")
+    backlog_scan.add_argument("--project")
+    backlog_scan.add_argument("--force", action="store_true")
+    backlog_scan.add_argument("--max-age", type=int)
+    backlog_scan.add_argument("--live", action="store_true", help="also return the live findings from this scan")
+    backlog_scan.add_argument("--no-opportunities", action="store_true", help="skip rebuilding the opportunity digest")
     adapters = commands.add_parser("adapters")
     adapter = commands.add_parser("adapter")
     adapter_sub = adapter.add_subparsers(dest="action", required=True)
@@ -562,7 +574,10 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
         if command in {"projects", "project"}:
             action = getattr(args, "action", None) or "list"
             if action == "scan":
-                return [item.to_dict() for item in service.scan_projects(getattr(args, "root", None), include_all=getattr(args, "all", False))]
+                discovered = service.scan_projects(getattr(args, "root", None), include_all=getattr(args, "all", False))
+                if not getattr(args, "no_health", False):
+                    service.refresh_status()
+                return [item.to_dict() for item in discovered]
             if action == "list":
                 return [item.to_dict() for item in service.projects.list(priority=getattr(args, "priority", None), kind=getattr(args, "kind", None))]
             if action == "show":
@@ -636,6 +651,11 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
                 raise ValidationError("route requires a goal")
             return service.route_goal(args.goal, args.project)
         if command == "opportunities":
+            if getattr(args, "opportunity_action", None) == "refresh":
+                limit = max(1, min(int(getattr(args, "limit", 10) or 10), 50))
+                items = service.opportunities(limit=limit)
+                digest = service.status_model.record_opportunity_digest(items)
+                return {"recorded": True, "generated_at": digest["generated_at"], "count": len(digest["items"]), "items": digest["items"]}
             return service.opportunities(args.resource, args.project, args.limit)
         if command == "optimize":
             return service.optimize(args.max_tasks, args.execute, args.queue)
@@ -703,8 +723,30 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
         if command == "ask":
             return service.ask(args.question)
         if command == "backlog":
-            findings = service.backlog.inspect(args.project) if args.project else [item for project in service.projects.list() for item in service.backlog.inspect(project)]
-            return {"findings": findings, "proposals": service.backlog.propose(findings)}
+            action = getattr(args, "backlog_action", None)
+            project = getattr(args, "project", None)
+            if action == "scan":
+                result = service.refresh_status(
+                    projects=project,
+                    force=bool(getattr(args, "force", False)),
+                    max_age_seconds=getattr(args, "max_age", None),
+                    include_opportunities=not bool(getattr(args, "no_opportunities", False)),
+                )
+                if getattr(args, "live", False):
+                    findings = service.backlog.inspect(project) if project else [item for value in service.projects.list() for item in service.backlog.inspect(value)]
+                    return {**result, "source": "live_inspection", "findings": findings, "proposals": service.backlog.propose(findings)}
+                return {**result, "source": "persisted_summaries"}
+            if getattr(args, "live", False):
+                findings = service.backlog.inspect(project) if project else [item for value in service.projects.list() for item in service.backlog.inspect(value)]
+                return {"source": "live_inspection", "findings": findings, "proposals": service.backlog.propose(findings)}
+            identifiers = [service.projects.get(project).id] if project else None
+            summaries = service.status_model.summaries(identifiers)
+            return {
+                "source": "persisted_summaries",
+                "projects": [summaries[key] for key in sorted(summaries)],
+                "health": service.status_model.health_overview(),
+                "refresh": "gg backlog scan",
+            }
         if command == "adapter":
             if args.opencode_action == "health":
                 return service.adapters.get("opencode").health()

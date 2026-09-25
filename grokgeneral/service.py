@@ -21,6 +21,7 @@ from .opportunities import OpportunityEngine
 from .opportunity_v2 import OpportunityEngineV2
 from .policies import PolicyEngine
 from .projects import ProjectRegistry, RootRegistry
+from .read_model import StatusReadModel
 from .resources import ResourceRegistry
 from .results import compact_result
 from .router import Router
@@ -54,6 +55,7 @@ class GrokGeneral:
         self.context_builder = ContextBuilder(self.state, self.projects, self.cache)
         self.backlog = BacklogInspector(self.state, self.projects)
         self.opportunities_engine = OpportunityEngineV2(self.state, self.projects, self.resources, self.tasks, self.router, self.backlog, self.executions)
+        self.status_model = StatusReadModel(self.state, self.projects, self.backlog, self.executions)
         self._doctor = Doctor(self.state, self.projects, self.resources, self.events, self.adapters)
         self.contract = GrokBotContract(self)
 
@@ -214,14 +216,32 @@ class GrokGeneral:
         result["approx_bytes"] = pack.approx_bytes
         return result
 
-    def opportunities(self, resource: str | None = None, project: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
-        return self.opportunities_engine.list(projects=project, resource=resource, limit=limit)
+    def opportunities(self, resource: str | None = None, project: str | None = None, limit: int = 20, findings: dict[str, list[dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
+        return self.opportunities_engine.list(projects=project, resource=resource, limit=limit, findings=findings)
 
     def optimize(self, max_tasks: int = 4, execute: bool = False, queue: bool | None = None) -> dict[str, Any]:
         return self.opportunities_engine.optimize(max_tasks=max_tasks, execute=execute, queue=queue)
 
     def status_snapshot(self, full: bool = False) -> dict[str, Any]:
         return build_status_snapshot(self, full=full)
+
+    def refresh_status(
+        self,
+        projects: str | list[str] | None = None,
+        force: bool = False,
+        max_age_seconds: int | None = None,
+        include_opportunities: bool = True,
+    ) -> dict[str, Any]:
+        selected = projects
+        if isinstance(projects, str):
+            selected = [projects]
+        return self.status_model.scan(
+            projects=selected,
+            force=force,
+            max_age_seconds=max_age_seconds,
+            include_opportunities=include_opportunities,
+            opportunity_source=self.opportunities,
+        )
 
     def contract_status(self) -> dict[str, Any]:
         return self.contract.status()

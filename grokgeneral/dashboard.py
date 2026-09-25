@@ -39,12 +39,10 @@ def build_status_snapshot(service: Any, full: bool = False) -> dict[str, Any]:
         if effective["available"] and remaining is not None and 0 < remaining <= 7 * 86400:
             expiring.append({"id": resource.id, "name": resource.name, "expires_at": resource.expires_at, "seconds_remaining": remaining})
     recent = [_execution_summary(item) for item in executions if item.get("status") in {"completed", "failed", "timeout", "blocked"}][-10:]
-    opportunities = []
-    try:
-        for item in service.opportunities(limit=10):
-            opportunities.append({"id": item.get("id"), "work_key": item.get("work_key"), "task": item.get("task"), "project": item.get("project"), "executor": item.get("executor"), "reason": item.get("reason"), "cost_class": item.get("cost_class"), "score": item.get("score"), "approval_needed": item.get("approval_needed", [])})
-    except Exception:
-        opportunities = []
+    digest = service.status_model.opportunity_digest()
+    opportunities = list(digest.get("items") or [])
+    health_freshness = service.status_model.health_overview()
+    project_health = service.status_model.summaries()
     next_actions = [{"task": item.get("task"), "project": item.get("project"), "action": item.get("reason"), "score": item.get("score")} for item in opportunities[:5]]
     health_state = service.state.health()
     health = {key: health_state.get(key) for key in ("ok", "integrity", "schema_version", "writable")}
@@ -61,6 +59,9 @@ def build_status_snapshot(service: Any, full: bool = False) -> dict[str, Any]:
         "expiring_resources": expiring[:20],
         "recent_completions": recent,
         "top_opportunities": opportunities[:10],
+        "opportunity_digest": {"status": digest.get("status"), "generated_at": digest.get("generated_at"), "age_seconds": digest.get("age_seconds"), "count": digest.get("count", 0)},
+        "health_freshness": health_freshness,
+        "project_health": [project_health[project.id] for project in sorted(projects, key=lambda item: (-item.priority_score, item.id)) if project.id in project_health][:10],
         "next_actions": next_actions,
         "usage": service.usage.summary(),
     }

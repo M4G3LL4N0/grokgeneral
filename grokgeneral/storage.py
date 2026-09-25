@@ -17,6 +17,7 @@ _SECRET_ASSIGNMENT = re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-
 _TABLES = {
     "projects", "roots", "resources", "tasks", "policies", "events", "subscriptions",
     "usage", "cache_entries", "opportunities", "executions", "approvals", "scheduler_runs", "task_claims", "audit_log",
+    "project_health", "status_digest",
 }
 _COMMON_COLUMNS = {
     "id", "name", "path", "repository", "status", "priority", "project_id",
@@ -194,6 +195,13 @@ class StateStore:
                     entity_id TEXT, data TEXT NOT NULL, created_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS project_health (
+                    id TEXT PRIMARY KEY, project_id TEXT, status TEXT, health TEXT, last_activity TEXT,
+                    data TEXT NOT NULL, created_at TEXT, updated_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS status_digest (
+                    id TEXT PRIMARY KEY, kind TEXT, data TEXT NOT NULL, created_at TEXT, updated_at TEXT
+                );
                 CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
                 CREATE INDEX IF NOT EXISTS idx_resources_expiry ON resources(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -344,6 +352,10 @@ class StateStore:
             columns = ["id", "event_type", "name", "action", "enabled", "data", "created_at", "updated_at"]
         elif table == "policies":
             columns = ["id", "name", "data", "created_at", "updated_at"]
+        elif table == "project_health":
+            columns = ["id", "project_id", "status", "health", "last_activity", "data", "created_at", "updated_at"]
+        elif table == "status_digest":
+            columns = ["id", "kind", "data", "created_at", "updated_at"]
         placeholders = ",".join("?" for _ in columns)
         updates = ",".join(f"{column}=excluded.{column}" for column in columns if column not in {"id", "key"})
         if table == "cache_entries":
