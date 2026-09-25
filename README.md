@@ -288,9 +288,9 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q grokgeneral tests
 ```
 
-The tests cover persistence, atomic writes, concurrent writers, project/resource registries, explicit roots and identity, expiration/rerouting, evidence-backed opportunities, durable approvals, bounded scheduler claims and repository locks, compact results, unit-aware usage, OpenCode adapter parsing, execution receipts, repository safety, validation, dashboard, GrokBot contract, events, context isolation, cache, malformed input, offline behavior, CLI JSON, and service integration. The current offline suite contains 150 tests.
+The tests cover persistence, atomic writes, concurrent writers, project/resource registries, explicit roots and identity, expiration/rerouting, evidence-backed opportunities, durable approvals, bounded scheduler claims and repository locks, compact results, unit-aware usage, OpenCode adapter parsing, execution receipts, repository safety, validation, dashboard, GrokBot contract, events, context isolation, cache, malformed input, offline behavior, CLI JSON, and service integration. The current offline suite contains 151 tests.
 
-A real dogfood execution was run through GrokGeneral with the verified `opencode/space-bunny-free` model in a clean temporary Git project. It produced a completed receipt only after the registered validation command passed. The Part 2 dogfood batch is run in clean temporary projects and never scans or mutates neighboring repositories.
+A real dogfood execution was run through GrokGeneral with the verified `opencode/space-bunny-free` model in a clean temporary Git project. It produced a completed receipt only after the registered validation command passed. The Part 2 dogfood batch used two clean temporary projects and two read-only tasks: both routed to Space Bunny, completed with validation, produced compact results, and reported free-resource usage without changing repository files. Neighboring repositories were neither scanned nor mutated.
 
 ## Deliberate v1 limitations
 
