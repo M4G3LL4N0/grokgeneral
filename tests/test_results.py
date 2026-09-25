@@ -46,3 +46,52 @@ class ResultTests(unittest.TestCase):
         result = compact_result(receipt, {"changes": []}, {"changes": []})
         self.assertLessEqual(len(canonical_json(result)), 16384)
         self.assertNotIn("/Users/", json.dumps(result))
+
+    def test_preexisting_dirty_files_are_not_attributed_to_execution(self):
+        receipt = {"id": "execution-4", "task_id": "task-4", "project_id": "concierge", "provider": "opencode", "model": "opencode/space-bunny-free", "executor": "Space Bunny", "status": "completed", "summary": "read-only review", "validation": {"status": "passed"}}
+        before = {"changes": [" M src/a.py", " M src/b.py", "?? new.txt"]}
+        after = {"changes": [" M src/a.py", " M src/b.py", "?? new.txt"]}
+        result = compact_result(receipt, before, after)
+        self.assertEqual(result["files_changed"], 0)
+        self.assertTrue(result["preexisting_dirty"])
+        self.assertEqual(result["files_changed_by_execution"], [])
+        self.assertEqual(result["files_added_by_execution"], [])
+        self.assertEqual(result["files_deleted_by_execution"], [])
+
+    def test_only_new_changes_are_attributed_to_execution(self):
+        receipt = {"id": "execution-5", "task_id": "task-5", "project_id": "concierge", "provider": "opencode", "model": "opencode/space-bunny-free", "executor": "Space Bunny", "status": "completed", "summary": "fixed it", "validation": {"status": "passed"}}
+        before = {"changes": [" M src/a.py", " M src/b.py"]}
+        after = {"changes": [" M src/a.py", " M src/b.py", " M src/c.py", "?? added.py", "?? scratch.txt"]}
+        result = compact_result(receipt, before, after)
+        self.assertTrue(result["preexisting_dirty"])
+        self.assertEqual(result["files_changed"], 3)
+        self.assertEqual(sorted(result["files_changed_by_execution"]), ["added.py", "scratch.txt", "src/c.py"])
+        self.assertEqual(result["files_added_by_execution"], ["added.py", "scratch.txt"])
+        self.assertEqual(result["files_deleted_by_execution"], [])
+
+    def test_deleted_by_execution_is_reported(self):
+        receipt = {"id": "execution-6", "task_id": "task-6", "project_id": "concierge", "provider": "opencode", "model": "opencode/space-bunny-free", "executor": "Space Bunny", "status": "completed", "summary": "removed dead code", "validation": {"status": "passed"}}
+        before = {"changes": [" M src/a.py", "?? gone.py"]}
+        after = {"changes": [" M src/a.py"]}
+        result = compact_result(receipt, before, after)
+        self.assertEqual(result["files_changed"], 1)
+        self.assertEqual(result["files_deleted_by_execution"], ["gone.py"])
+        self.assertEqual(result["files_added_by_execution"], [])
+
+    def test_uncertain_attribution_is_reported_as_unknown(self):
+        receipt = {"id": "execution-7", "task_id": "task-7", "project_id": "concierge", "provider": "opencode", "model": "opencode/space-bunny-free", "executor": "Space Bunny", "status": "completed", "summary": "no snapshot", "validation": {"status": "not-run"}}
+        result = compact_result(receipt, None, None)
+        self.assertIsNone(result["files_changed"])
+        self.assertEqual(result["files_changed_by_execution"], None)
+        self.assertIsNone(result["preexisting_dirty"])
+        self.assertIn("file attribution unavailable", " ".join(result["warnings"]))
+
+    def test_rename_is_not_counted_as_a_brand_new_file(self):
+        receipt = {"id": "execution-8", "task_id": "task-8", "project_id": "concierge", "provider": "opencode", "model": "opencode/space-bunny-free", "executor": "Space Bunny", "status": "completed", "summary": "renamed", "validation": {"status": "passed"}}
+        before = {"changes": []}
+        after = {"changes": ["R  old.py -> new.py"]}
+        result = compact_result(receipt, before, after)
+        self.assertEqual(result["files_added_by_execution"], [])
+        self.assertEqual(result["files_deleted_by_execution"], [])
+        self.assertIn("new.py", result["files_changed_by_execution"])
+        self.assertEqual(result["files_changed"], 1)
