@@ -184,6 +184,13 @@ def _build_parser() -> argparse.ArgumentParser:
     project_kind = project_sub.add_parser("kind")
     project_kind.add_argument("project")
     project_kind.add_argument("kind")
+    project_validation = project_sub.add_parser("validation")
+    project_validation_sub = project_validation.add_subparsers(dest="validation_action", required=True)
+    project_validation_add = project_validation_sub.add_parser("add")
+    project_validation_add.add_argument("project")
+    project_validation_add.add_argument("commands")
+    project_validation_list = project_validation_sub.add_parser("list")
+    project_validation_list.add_argument("project")
 
     roots = commands.add_parser("roots")
     root = commands.add_parser("root")
@@ -195,6 +202,8 @@ def _build_parser() -> argparse.ArgumentParser:
     root_remove.add_argument("id")
 
     resources = commands.add_parser("resources")
+    resources.add_argument("--expiring", action="store_true")
+    resources.add_argument("--expired", action="store_true")
     resource_commands = resources.add_subparsers(dest="action")
     resource_commands.add_parser("list")
     resource_show = resource_commands.add_parser("show")
@@ -287,6 +296,31 @@ def _build_parser() -> argparse.ArgumentParser:
     usage.add_argument("--task-id")
     usage.add_argument("--metadata")
     usage.add_argument("--records", action="store_true")
+
+    executor = commands.add_parser("executor")
+    executor_sub = executor.add_subparsers(dest="action", required=True)
+    executor_run = executor_sub.add_parser("run")
+    executor_run.add_argument("task_id")
+    executor_run.add_argument("--dry-run", action="store_true")
+    executor_run.add_argument("--allow-execution", action="store_true")
+    executor_run.add_argument("--allow-modify", action="store_true")
+    executor_run.add_argument("--allow-validate", action="store_true")
+    executor_run.add_argument("--allow-network", action="store_true")
+    executor_run.add_argument("--allow-push", action="store_true")
+    executor_run.add_argument("--allow-destructive", action="store_true")
+    executor_run.add_argument("--allow-spend", action="store_true")
+    executor_run.add_argument("--model")
+    executor_run.add_argument("--timeout", type=int, default=120)
+
+    executions = commands.add_parser("executions")
+    executions.add_argument("--task")
+    executions.add_argument("--project")
+    execution = commands.add_parser("execution")
+    execution_sub = execution.add_subparsers(dest="action", required=True)
+    execution_show = execution_sub.add_parser("show")
+    execution_show.add_argument("id")
+    task_executions = task_sub.add_parser("executions")
+    task_executions.add_argument("id")
 
     context = commands.add_parser("context")
     context.add_argument("task_id")
@@ -478,10 +512,15 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
                 return service.set_project_priority(args.project, args.priority).to_dict()
             if action == "kind":
                 return service.projects.set_kind(args.project, args.kind).to_dict()
+            if action == "validation" and args.validation_action == "add":
+                commands = _parse_json(args.commands, "validation commands")
+                return service.set_project_validation(args.project, commands).to_dict()
+            if action == "validation" and args.validation_action == "list":
+                return {"project": args.project, "commands": service.project_validation(args.project)}
         if command in {"resources", "resource"}:
             action = getattr(args, "action", None) or "list"
             if action == "list":
-                return [item.to_dict() for item in service.resources.list()]
+                return [item.to_dict() for item in service.resources.list(expiring=getattr(args, "expiring", False), expired=getattr(args, "expired", False))]
             if action == "show":
                 resource = service.resources.get(args.name)
                 value = resource.to_dict()
@@ -515,6 +554,8 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
                 return service.tasks.complete(args.id, outputs if isinstance(outputs, list) else [outputs]).to_dict()
             if action == "fail":
                 return service.tasks.fail(args.id, args.error).to_dict()
+            if action == "executions":
+                return service.executions_list(task_id=args.id)
         if command == "route":
             if not args.goal:
                 raise ValidationError("route requires a goal")
@@ -553,6 +594,13 @@ def _handle(args: argparse.Namespace, json_output: bool, offline: bool, state_di
             if args.records:
                 return service.usage.list(args.project, args.resource, args.task_id)
             return service.usage.summary(args.project, args.resource, args.task_id)
+        if command == "executor":
+            approvals = {name.removeprefix("allow-") for name in ("allow-modify", "allow-validate", "allow-network", "allow-push", "allow-destructive", "allow-spend") if getattr(args, name, False)}
+            return service.executor_run(args.task_id, dry_run=args.dry_run, approvals=approvals, allow_execution=args.allow_execution, model=args.model, timeout=args.timeout)
+        if command == "executions":
+            return service.executions_list(task_id=args.task, project=args.project)
+        if command == "execution":
+            return service.execution_show(args.id)
         if command == "context":
             return service.context(args.task_id)
         if command == "schedule":

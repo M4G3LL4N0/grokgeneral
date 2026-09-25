@@ -4,6 +4,7 @@ import re
 from datetime import timedelta
 from typing import Any
 
+from .cache import Cache
 from .errors import NotFoundError, ValidationError
 from .models import Resource
 from .storage import StateStore
@@ -26,17 +27,23 @@ def _number(value: Any) -> float | None:
 
 
 class ResourceRegistry:
-    def __init__(self, state: StateStore, events: Any | None = None) -> None:
+    def __init__(self, state: StateStore, events: Any | None = None, cache: Cache | None = None) -> None:
         self.state = state
         self.events = events
+        self.cache = cache
         self.state.initialize()
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         if self.events is not None:
             self.events.emit(event_type, payload)
 
-    def list(self) -> list[Resource]:
-        return [Resource.from_dict(item) for item in self.state.list_records("resources")]
+    def list(self, expiring: bool = False, expired: bool = False) -> list[Resource]:
+        resources = [Resource.from_dict(item) for item in self.state.list_records("resources")]
+        if expiring:
+            resources = [item for item in resources if self.effective(item)["available"] and (seconds_until(item.expires_at) is not None and 0 < seconds_until(item.expires_at) <= 7 * 86400)]
+        if expired:
+            resources = [item for item in resources if self.effective(item)["expired"]]
+        return resources
 
     def get(self, name: str) -> Resource:
         wanted = str(name).strip().lower()
@@ -147,6 +154,9 @@ class ResourceRegistry:
             values["metadata"] = metadata
             updated = Resource.from_dict(values)
             self._save(updated, "resource.event")
+            if self.cache is not None:
+                self.cache.invalidate(kind="route")
+                self.cache.invalidate(kind="opportunity")
             self._emit(event_type, {"resource": updated.id, "expires_at": updated.expires_at, "reason": effective["reason"]})
             emitted.append({"event": event_type, "resource": updated.id})
         return emitted

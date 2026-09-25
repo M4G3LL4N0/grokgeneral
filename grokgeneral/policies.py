@@ -59,7 +59,13 @@ DEFAULT_POLICY: dict[str, Any] = {
     },
     "safety": {
         "read": {"allowed": True, "requires_approval": False},
+        "inspect": {"allowed": True, "requires_approval": False},
         "analyze": {"allowed": True, "requires_approval": False},
+        "validate": {"allowed": True, "requires_approval": False},
+        "modify": {"allowed": True, "requires_approval": True, "approval": "modify"},
+        "commit": {"allowed": True, "requires_approval": True, "approval": "commit"},
+        "deploy": {"allowed": True, "requires_approval": True, "approval": "deploy"},
+        "external": {"allowed": True, "requires_approval": True, "approval": "external"},
         "local-test": {"allowed": True, "requires_approval": False},
         "network": {"allowed": True, "requires_approval": True, "approval": "network"},
         "destructive": {"allowed": True, "requires_approval": True, "approval": "destructive"},

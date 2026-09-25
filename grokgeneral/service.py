@@ -11,6 +11,8 @@ from .context import ContextBuilder
 from .doctor import Doctor
 from .errors import NotFoundError
 from .events import EventBus
+from .executions import ExecutionRegistry
+from .executor import Executor
 from .models import Project, Task
 from .opportunities import OpportunityEngine
 from .policies import PolicyEngine
@@ -35,12 +37,14 @@ class GrokGeneral:
         self.cache = Cache(self.state)
         self.roots = RootRegistry(self.state)
         self.projects = ProjectRegistry(self.state, self.events, self.cache)
-        self.resources = ResourceRegistry(self.state, self.events)
+        self.resources = ResourceRegistry(self.state, self.events, self.cache)
         self.usage = UsageLedger(self.state)
+        self.executions = ExecutionRegistry(self.state)
         self.router = Router(self.state, self.policies, self.resources, self.cache)
         self.tasks = TaskRegistry(self.state, self.events, self.policies, self.resources, self.router, self.usage)
         self.scheduler = Scheduler(self.state, self.tasks, self.router)
         self.adapters = AdapterRegistry(self.state, self.policies)
+        self.executor = Executor(self)
         self.context_builder = ContextBuilder(self.state, self.projects, self.cache)
         self.backlog = BacklogInspector(self.state, self.projects)
         self.opportunities_engine = OpportunityEngine(self.state, self.projects, self.resources, self.tasks, self.router)
@@ -85,6 +89,20 @@ class GrokGeneral:
 
     def set_project_priority(self, identifier: str, priority: str) -> Project:
         return self.projects.set_priority(identifier, priority)
+
+    def set_project_validation(self, identifier: str, commands: list[list[str]]) -> Project:
+        project = self.projects.get(identifier)
+        if not isinstance(commands, list) or not commands or any(isinstance(command, str) or not isinstance(command, list) or not command or not all(isinstance(item, str) and item for item in command) for command in commands):
+            from .errors import ValidationError
+            raise ValidationError("validation commands must be a non-empty list of argv arrays")
+        metadata = dict(project.metadata or {})
+        metadata["validation_commands"] = commands
+        return self.projects.update(project.id, {"metadata": metadata})
+
+    def project_validation(self, identifier: str) -> list[list[str]]:
+        project = self.projects.get(identifier)
+        value = project.metadata.get("validation_commands", []) if isinstance(project.metadata, dict) else []
+        return value if isinstance(value, list) else []
 
     def add_resource(self, data: dict[str, Any]):
         return self.resources.add(data)
@@ -139,6 +157,15 @@ class GrokGeneral:
                 project_path = None
         return self.tasks.run(task_id, approvals=approvals, project_path=project_path)
 
+    def executor_run(self, task_id: str, dry_run: bool = False, approvals: Any = None, allow_execution: bool = False, model: str | None = None, timeout: int = 120) -> dict[str, Any]:
+        return self.executor.run(task_id, dry_run=dry_run, approvals=approvals, allow_execution=allow_execution, model=model, timeout=timeout)
+
+    def executions_list(self, task_id: str | None = None, project: str | None = None) -> list[dict[str, Any]]:
+        return self.executions.list(task_id=task_id, project=project)
+
+    def execution_show(self, execution_id: str) -> dict[str, Any]:
+        return self.executions.get(execution_id)
+
     def schedule(self, execute: bool = False, approvals: Any = None) -> list[dict[str, Any]]:
         return self.scheduler.tick(execute=execute, approvals=approvals)
 
@@ -162,6 +189,7 @@ class GrokGeneral:
 
     def status(self) -> dict[str, Any]:
         self.resources.refresh_expirations()
+        self.tasks.reroute_queued()
         projects = self.projects.list()
         tasks = self.tasks.list()
         resources = self.resources.list()

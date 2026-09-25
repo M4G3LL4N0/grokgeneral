@@ -16,12 +16,12 @@ _SECRET_KEY = re.compile(r"(?:^|_)(?:api[_-]?key|access[_-]?token|refresh[_-]?to
 _SECRET_ASSIGNMENT = re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|secret|password|authorization|cookie)\s*([:=])\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)")
 _TABLES = {
     "projects", "roots", "resources", "tasks", "policies", "events", "subscriptions",
-    "usage", "cache_entries", "opportunities", "audit_log",
+    "usage", "cache_entries", "opportunities", "executions", "audit_log",
 }
 _COMMON_COLUMNS = {
     "id", "name", "path", "repository", "status", "priority", "project_id",
     "resource_id", "task_id", "kind", "event_type", "source", "expires_at",
-    "health", "last_activity", "created_at", "updated_at", "score", "data", "key", "value", "payload", "metadata", "action", "enabled", "delivered_at",
+    "health", "last_activity", "created_at", "updated_at", "score", "data", "key", "value", "payload", "metadata", "action", "enabled", "delivered_at", "executor", "provider", "model", "ended_at", "exit_code", "started_at",
 }
 
 
@@ -171,6 +171,12 @@ class StateStore:
                     id TEXT PRIMARY KEY, resource_id TEXT, task_id TEXT, score REAL,
                     data TEXT NOT NULL, created_at TEXT, updated_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS executions (
+                    id TEXT PRIMARY KEY, task_id TEXT, project_id TEXT, resource_id TEXT,
+                    executor TEXT, provider TEXT, model TEXT, status TEXT,
+                    started_at TEXT, ended_at TEXT, exit_code INTEGER, data TEXT NOT NULL,
+                    created_at TEXT, updated_at TEXT
+                );
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, entity_type TEXT,
                     entity_id TEXT, data TEXT NOT NULL, created_at TEXT
@@ -181,6 +187,8 @@ class StateStore:
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
                 CREATE INDEX IF NOT EXISTS idx_usage_resource ON usage(resource_id);
+                CREATE INDEX IF NOT EXISTS idx_executions_task ON executions(task_id);
+                CREATE INDEX IF NOT EXISTS idx_executions_project ON executions(project_id);
                 """
             )
             connection.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '1')")
@@ -245,6 +253,11 @@ class StateStore:
             "project_id": record.get("project") or record.get("project_id"),
             "resource_id": record.get("resource") or record.get("resource_id"),
             "task_id": record.get("task_id"),
+            "executor": record.get("executor"),
+            "provider": record.get("provider"),
+            "model": record.get("model"),
+            "ended_at": record.get("ended_at"),
+            "exit_code": record.get("exit_code"),
             "kind": record.get("kind"),
             "event_type": record.get("event_type") or record.get("type"),
             "source": record.get("source"),
@@ -267,6 +280,8 @@ class StateStore:
             columns = ["id", "name", "project_id", "status", "priority", "data", "created_at", "updated_at"]
         elif table == "opportunities":
             columns = ["id", "resource_id", "task_id", "score", "data", "created_at", "updated_at"]
+        elif table == "executions":
+            columns = ["id", "task_id", "project_id", "resource_id", "executor", "provider", "model", "status", "started_at", "ended_at", "exit_code", "data", "created_at", "updated_at"]
         elif table == "cache_entries":
             values["key"] = record_id
             values["value"] = data

@@ -18,11 +18,13 @@ from .storage import StateStore, redact
 from .timeutil import isoformat, utc_now
 from .usage import UsageLedger
 
-_STATUSES = {"proposed", "queued", "running", "completed", "failed", "blocked", "cancelled"}
+_STATUSES = {"proposed", "queued", "routed", "running", "validating", "completed", "failed", "blocked", "cancelled"}
 _TRANSITIONS = {
-    "proposed": {"queued", "running", "blocked", "cancelled"},
-    "queued": {"running", "blocked", "cancelled", "failed"},
-    "running": {"completed", "failed", "blocked", "cancelled"},
+    "proposed": {"queued", "routed", "running", "blocked", "cancelled"},
+    "queued": {"routed", "running", "blocked", "cancelled", "failed"},
+    "routed": {"running", "blocked", "cancelled", "failed"},
+    "running": {"validating", "completed", "failed", "blocked", "cancelled"},
+    "validating": {"completed", "failed", "blocked", "cancelled"},
     "blocked": {"queued", "cancelled"},
     "failed": {"queued", "cancelled"},
     "completed": set(),
@@ -122,6 +124,27 @@ class TaskRegistry:
         self.events.emit("ROUTE_DECIDED", {"task_id": task.id, "executor": decision.executor, "provider": decision.provider, "reason": decision.reason})
         return updated
 
+    def reroute_queued(self, changed_resources: list[str] | None = None) -> list[Task]:
+        if self.router is None:
+            return []
+        self.resources.refresh_expirations()
+        rerouted = []
+        for task in self.list(status="queued"):
+            if not self._dependencies_ready(task):
+                continue
+            decision = self.router.route(task)
+            if decision.executor == "unassigned" or decision.executor == task.assigned_executor:
+                continue
+            values = task.to_dict()
+            values["assigned_executor"] = decision.executor
+            values["routing_rationale"] = decision.to_dict()
+            values["updated_at"] = isoformat(utc_now())
+            updated = Task.from_dict(values)
+            self._save(updated, "task.rerouted", "TASK_ROUTED")
+            self.events.emit("ROUTE_DECISED", {"task_id": task.id, "executor": decision.executor, "provider": decision.provider, "reason": decision.reason, "rerouted_from": task.assigned_executor})
+            rerouted.append(updated)
+        return rerouted
+
     def _approval_for_command(self, command: list[str]) -> str | None:
         text = " ".join(command).lower()
         if any(token in text for token in ("git push", "push ")):
@@ -181,8 +204,8 @@ class TaskRegistry:
 
     def complete(self, task_id: str, outputs: list[Any] | None = None) -> Task:
         task = self.get(task_id)
-        if task.status != "running":
-            raise ValidationError("only running tasks can complete")
+        if task.status not in {"running", "validating"}:
+            raise ValidationError("only running or validating tasks can complete")
         values = task.to_dict()
         values["status"] = "completed"
         values["outputs"] = outputs or []
@@ -191,7 +214,7 @@ class TaskRegistry:
 
     def fail(self, task_id: str, error: str, increment_attempt: bool = True) -> Task:
         task = self.get(task_id)
-        if task.status not in {"running", "queued", "proposed"}:
+        if task.status not in {"running", "validating", "routed", "queued", "proposed"}:
             raise ValidationError(f"task cannot fail from status {task.status}")
         values = task.to_dict()
         values["status"] = "failed"
