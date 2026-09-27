@@ -330,4 +330,4 @@ A real dogfood execution was run through GrokGeneral with the verified `opencode
 - The scheduler is on-demand; no background process consumes resources while the CLI is closed.
 - OpenCode is an explicit, one-task execution adapter; GrokGeneral does not manage a long-lived agent session, credential lifecycle, or autonomous tool approvals.
 - Git mutations and external side effects remain outside the executor boundary; narrow approvals describe intent but do not perform those actions.
-- The repository contains no marketing website; a future site belongs in `~/startups/grokgeneral-website/`.
+- The public concept site lives in `site/` and deploys as a static page. The kernel itself remains a local CLI.

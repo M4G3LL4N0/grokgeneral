@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GrokGeneral — local kernel for the GrokBot ecosystem</title>
+    <meta
+      name="description"
+      content="GrokGeneral is a local control plane that indexes work, chooses the cheapest capable path, and records decisions. No paid model is required for the default offline path."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23101612'/%3E%3Cpath d='M8 22V10h3l5 8 5-8h3v12h-3v-7l-5 7-5-7v7z' fill='%2396e6b0'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="mast">
+      <a class="wordmark" href="#top">GrokGeneral</a>
+      <nav aria-label="Primary">
+        <a href="#kernel">Kernel</a>
+        <a href="#run">Run</a>
+        <a href="https://github.com/M4G3LL4N0/grokgeneral">Source</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <p class="kicker">Local kernel · offline by default</p>
+        <h1>Index the work. Route the cheapest capable path. Keep the receipt.</h1>
+        <p class="lede">
+          GrokGeneral is the local control plane for the GrokBot ecosystem. It
+          indexes projects and resources, packages narrow context, records
+          decisions, and surfaces temporary capacity. It is not a general-purpose
+          autonomous agent and does not call a paid model on the default path.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href="#run">Install and run</a>
+          <a class="btn" href="#kernel">See the model</a>
+        </div>
+      </section>
+
+      <section class="grid" id="kernel">
+        <article>
+          <h2>What it owns</h2>
+          <p>Projects, resources, tasks, policies, usage, events, and cache metadata in a local SQLite state directory.</p>
+        </article>
+        <article>
+          <h2>How it decides</h2>
+          <p>Routing is deterministic and cost-aware. Premium or GrokBot capacity is used only when policy says it is justified.</p>
+        </article>
+        <article>
+          <h2>What it refuses</h2>
+          <p>Network, spend, push, posting, and destructive actions require explicit approval. No credentials are stored for providers.</p>
+        </article>
+      </section>
+
+      <section class="run" id="run">
+        <h2>Run it locally</h2>
+        <p>Python 3.11 or newer. No third-party runtime dependencies.</p>
+        <pre><code>./gg --help
+./gg init --scan
+./gg status --json
+./gg opportunities --json</code></pre>
+        <p class="note">
+          Default state lives in <code>~/.grokgeneral/</code>. The offline test
+          suite does not require a network or an API key.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <p>GrokGeneral is a local kernel, not a hosted agent. Source stays on your machine.</p>
+    </footer>
+  </body>
+</html>
