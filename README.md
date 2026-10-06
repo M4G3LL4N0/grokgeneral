@@ -1,5 +1,21 @@
 # GrokGeneral
 
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="assets/hero/hero-reduced.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/hero/hero-light.svg">
+    <img src="assets/hero/hero-motion.svg" alt="GrokGeneral — animated project plate showing approach &rarr; detect &rarr; contain &rarr; close. Motion depicts this project's real state transition." width="100%">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="assets/hero/computational-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/hero/computational-light.svg">
+    <img src="assets/hero/computational-motion.svg" alt="State machine: approach &rarr; detect &rarr; contain &rarr; close." width="100%">
+  </picture>
+</p>
+
 GrokGeneral is the local kernel and control plane for the GrokBot ecosystem. It indexes projects and resources, normalizes work, chooses the cheapest capable execution path, packages narrow context, records decisions and usage, and surfaces temporary capacity opportunities.
 
 It is not a general-purpose autonomous agent. GrokGeneral performs little expensive reasoning itself. Work is delegated to registered resources or the local shell only after capability, policy, safety, and approval checks.
