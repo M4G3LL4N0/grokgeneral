@@ -61,7 +61,7 @@ Commands are included only when they were detected in the repository manifest; v
 - **Primary language:** Python
 - **Runtime:** Python
 - **Package manager:** undetermined
-- **Framework and integration signals:** Go, Rust
+- **Framework and integration signals:** See the source tree and package manifests; no framework claim is made here without a direct implementation reference.
 - **Entry-point signals:** None recorded
 - **Test evidence:** No test evidence recorded in the inventory
 - **Repository topics:** `python`, `security`, `cache`, `dung30n5`, `noaerth`, `policy`, `scheduler`, `tested`
